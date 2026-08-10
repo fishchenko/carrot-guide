@@ -1,0 +1,39 @@
+{
+  "run": "orbit",
+  "log": "logs/orbit.csv",
+  "tracking": {
+    "label": "orbit",
+    "duration_s": 89.9,
+    "settle_time_s": 6.3,
+    "hold_start_s": 14.3,
+    "window": "hold",
+    "measured_samples": 757,
+    "mean_error_m": 0.311,
+    "rms_error_m": 0.312,
+    "max_error_m": 0.389,
+    "p95_error_m": 0.368,
+    "max_speed_mps": 5.18
+  },
+  "conditions": {
+    "SIM_WIND_SPD": 6.0,
+    "SIM_WIND_DIR": 90.0,
+    "SIM_WIND_TURB": 1.0
+  },
+  "centre_ned": [
+    0.0,
+    0.0,
+    -20.0
+  ],
+  "radius_m": 25.0,
+  "loop": {
+    "target_hz": 10.0,
+    "ticks": 899.0,
+    "mean_hz": 10.0,
+    "jitter_stdev_ms": 0.319,
+    "max_lateness_ms": 0.684,
+    "p95_lateness_ms": 0.659,
+    "spin_slack_ms": 9.378,
+    "resyncs": 0.0,
+    "skipped_cycles": 0.0
+  }
+}

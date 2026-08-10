@@ -1,0 +1,9 @@
+{
+  "run": "latency",
+  "latency": {
+    "trials": 6.0,
+    "median_ms": 221.6,
+    "min_ms": 167.5,
+    "max_ms": 486.3
+  }
+}

@@ -1,0 +1,52 @@
+# ArduPilot SITL (ArduCopter), built from a pinned tag.
+#
+# There is no official ready-made SITL image, and the community ones are stale and
+# amd64-only, so the simulator is built here. The build is slow (tens of minutes)
+# but happens once; the result is a ~40 MB binary that starts in a second.
+FROM ubuntu:24.04 AS build
+
+ARG ARDUPILOT_TAG=Copter-4.5.7
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        g++ \
+        git \
+        libtool \
+        make \
+        pkg-config \
+        python3 \
+        python3-pip \
+        python3-setuptools \
+        python3-wheel \
+        rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+# ArduPilot's waf still wants the 3.x line of empy; the 4.x API breaks configure.
+RUN pip3 install --break-system-packages --no-cache-dir empy==3.3.4 pexpect future
+
+WORKDIR /ardupilot
+RUN git clone --depth 1 --branch "${ARDUPILOT_TAG}" https://github.com/ArduPilot/ardupilot.git . \
+    && git submodule update --init --recursive --depth 1
+
+RUN ./waf configure --board sitl && ./waf copter
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libatomic1 \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /ardupilot/build/sitl/bin/arducopter /usr/local/bin/arducopter
+COPY --from=build /ardupilot/Tools/autotest/default_params/copter.parm /sitl/copter.parm
+COPY docker/sitl-entrypoint.sh /usr/local/bin/sitl-entrypoint.sh
+RUN chmod +x /usr/local/bin/sitl-entrypoint.sh
+
+# MAVLink over TCP: serial0 of the simulated autopilot.
+EXPOSE 5760
+
+WORKDIR /sitl
+ENTRYPOINT ["/usr/local/bin/sitl-entrypoint.sh"]

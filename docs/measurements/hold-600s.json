@@ -1,0 +1,38 @@
+{
+  "run": "hold",
+  "log": "logs/hold-600s.csv",
+  "tracking": {
+    "label": "hold",
+    "duration_s": 599.9,
+    "settle_time_s": 6.4,
+    "hold_start_s": 14.4,
+    "window": "hold",
+    "measured_samples": 5856,
+    "mean_error_m": 0.011,
+    "rms_error_m": 0.012,
+    "max_error_m": 0.034,
+    "p95_error_m": 0.021,
+    "max_speed_mps": 5.11
+  },
+  "conditions": {
+    "SIM_WIND_SPD": 6.0,
+    "SIM_WIND_DIR": 90.0,
+    "SIM_WIND_TURB": 1.0
+  },
+  "target_ned": [
+    25.0,
+    0.0,
+    -15.0
+  ],
+  "loop": {
+    "target_hz": 10.0,
+    "ticks": 5999.0,
+    "mean_hz": 10.0,
+    "jitter_stdev_ms": 0.136,
+    "max_lateness_ms": 4.549,
+    "p95_lateness_ms": 0.002,
+    "spin_slack_ms": 15.934,
+    "resyncs": 0.0,
+    "skipped_cycles": 0.0
+  }
+}

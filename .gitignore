@@ -1,0 +1,9 @@
+.venv/
+.idea/
+__pycache__/
+*.egg-info/
+logs/
+*.bin
+*.tlog
+memray-*.bin
+memray-*.html

@@ -1,0 +1,31 @@
+[project]
+name = "carrot-guide"
+version = "0.1.0"
+description = "MAVLink guidance laws flown against an ArduPilot SITL simulator"
+requires-python = ">=3.11"
+dependencies = [
+    "pymavlink>=2.4.42",
+]
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.8"]
+dev = ["pytest>=8.0", "memray>=1.11"]
+
+[project.scripts]
+carrot-guide = "carrot_guide.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Import from the source tree directly, so the unit tests run in a bare checkout
+# without an install step.
+pythonpath = ["src"]
+markers = [
+    "sitl: integration test that needs a running ArduPilot SITL instance",
+]

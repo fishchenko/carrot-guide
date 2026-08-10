@@ -1,0 +1,13 @@
+services:
+  sitl:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.sitl
+    image: carrot-guide/ardupilot:4.5.7
+    ports:
+      - "5760:5760"
+    environment:
+      # Kyiv, so the logs read like the place the thing was written in.
+      SITL_HOME: "50.4501,30.5234,120,0"
+      SITL_SPEEDUP: "1"
+    stop_grace_period: 2s

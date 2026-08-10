@@ -1,0 +1,26 @@
+{
+  "run": "hold",
+  "log": "logs/hold-stream-60s.csv",
+  "tracking": null,
+  "conditions": {
+    "SIM_WIND_SPD": 6.0,
+    "SIM_WIND_DIR": 90.0,
+    "SIM_WIND_TURB": 1.0
+  },
+  "target_ned": [
+    25.0,
+    0.0,
+    -15.0
+  ],
+  "loop": {
+    "target_hz": 10.0,
+    "ticks": 599.0,
+    "mean_hz": 10.0,
+    "jitter_stdev_ms": 0.001,
+    "max_lateness_ms": 0.005,
+    "p95_lateness_ms": 0.001,
+    "spin_slack_ms": 12.544,
+    "resyncs": 0.0,
+    "skipped_cycles": 0.0
+  }
+}

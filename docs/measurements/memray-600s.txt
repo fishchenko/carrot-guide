@@ -1,0 +1,60 @@
+
+📏 Total allocations:
+	52901
+
+📦 Total memory allocated:
+	65.297MB
+
+📈 Peak memory usage:
+	21.540MB
+
+📊 Histogram of allocation size:
+	min: 1.000B
+	--------------------------------------------
+	< 4.000B   :   492 ▇
+	< 18.000B  :   271 ▇
+	< 80.000B  :   327 ▇
+	< 348.000B : 32274 ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇
+	< 1.504kB  : 16681 ▇▇▇▇▇▇▇▇▇▇▇▇▇
+	< 6.497kB  :  1964 ▇▇
+	< 28.069kB :   741 ▇
+	< 121.255kB:   113 ▇
+	< 523.799kB:    19 ▇
+	<=2.263MB  :    19 ▇
+	--------------------------------------------
+	max: 2.263MB
+
+📂 Allocator type distribution:
+	 MALLOC: 49677
+	 REALLOC: 1905
+	 CALLOC: 1199
+	 MMAP: 119
+	 POSIX_MEMALIGN: 1
+
+🥇 Top 5 largest allocating locations (by size):
+	- _compile_bytecode:<frozen importlib._bootstrap_external>:729 -> 14.462MB
+	- get_data:<frozen importlib._bootstrap_external>:1131 -> 13.219MB
+	- _dict_to_list:/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/csv.py:147 -> 6.145MB
+	- _create_fn:/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/dataclasses.py:433 -> 4.592MB
+	- recv:~/Documents/Development.localized/carrot-guide/.venv/lib/python3.11/site-packages/pymavlink/mavutil.py:1279 -> 4.173MB
+
+🥇 Top 5 largest allocating locations (by number of allocations):
+	- recv:~/Documents/Development.localized/carrot-guide/.venv/lib/python3.11/site-packages/pymavlink/mavutil.py:1279 -> 31615
+	- _dict_to_list:/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/csv.py:147 -> 6001
+	- _compile_bytecode:<frozen importlib._bootstrap_external>:729 -> 3453
+	- _create_fn:/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/dataclasses.py:433 -> 2383
+	- sub:/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/re/__init__.py:185 -> 1157
+
+🥇 Top 5 allocating modules (by size):
+	- pymavlink: 32.595MB total | 36196 allocations
+	- numpy: 17.050MB total | 6674 allocations
+	- carrot_guide: 15.352MB total | 9807 allocations
+	- fastcrc: 188.653kB total | 160 allocations
+	- <root>: 111.453kB total | 64 allocations
+
+🥇 Top 5 allocating modules (by number of allocations):
+	- pymavlink: 32.595MB total | 36196 allocations
+	- carrot_guide: 15.352MB total | 9807 allocations
+	- numpy: 17.050MB total | 6674 allocations
+	- fastcrc: 188.653kB total | 160 allocations
+	- <root>: 111.453kB total | 64 allocations
