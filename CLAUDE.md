@@ -11,7 +11,8 @@ MAVLink at a 10 Hz control loop. Simulator only — no hardware. `SPEC.md` is th
 ## Commands
 
 ```bash
-make venv                     # .venv + editable install with [plots,dev]
+cp .env.example .env          # required: set CARROT_GUIDE_VENV to an absolute path
+make venv                     # virtualenv + editable install with [plots,dev]
 make test                     # 115 unit tests, no simulator, ~1.6 s
 make smoke                    # the installed console script actually imports
 make sitl-up                  # build & run ArduCopter SITL in Docker (first build ~15 min)
@@ -29,9 +30,9 @@ make sitl-down                # stop the simulator
 `pyproject.toml` lets pytest import from the source tree — that is what `make smoke`
 exists to catch.
 
-Single test: `.venv/bin/pytest tests/test_guidance.py::test_name -q`. SITL tests are marked
-`sitl` and skip unless `CARROT_SITL_URL` is set (`make test-sitl` sets it). `pytest` needs no
-install step — `pythonpath = ["src"]` is in `pyproject.toml`.
+Single test: `$CARROT_GUIDE_VENV/bin/pytest tests/test_guidance.py::test_name -q`. SITL tests
+are marked `sitl` and skip unless `CARROT_SITL_URL` is set (`make test-sitl` sets it). `pytest`
+needs no install step — `pythonpath = ["src"]` is in `pyproject.toml`.
 
 Flying commands go through the `carrot-guide` CLI (`carrot_guide.cli`): `telemetry`, `hold`,
 `orbit`, `latency`, `report`. Each flying subcommand writes a CSV to `logs/` and prints a JSON

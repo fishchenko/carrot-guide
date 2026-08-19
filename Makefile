@@ -1,5 +1,12 @@
 PYTHON ?= python3
-VENV := .venv
+ifeq ($(wildcard .env),)
+$(error .env is missing: cp .env.example .env, then set CARROT_GUIDE_VENV to an absolute path)
+endif
+include .env
+ifeq ($(strip $(CARROT_GUIDE_VENV)),)
+$(error CARROT_GUIDE_VENV is empty in .env; without it BIN would collapse to /bin)
+endif
+VENV := $(CARROT_GUIDE_VENV)
 BIN := $(VENV)/bin
 SITL_URL ?= tcp:127.0.0.1:5760
 SITL_HOST ?= 127.0.0.1
@@ -67,11 +74,11 @@ profile:
 # Needs the logs a run leaves behind; logs/ is not in the repository, so this is a
 # post-`make measure` step rather than something a fresh clone can do.
 plots:
-	BIN=$(BIN) scripts/plots.sh
+	scripts/plots.sh
 
 # Everything the README quotes, in one pass.
 measure:
-	BIN=$(BIN) SITL_URL=$(SITL_URL) scripts/measure.sh
+	SITL_URL=$(SITL_URL) scripts/measure.sh
 
 clean:
 	rm -rf logs memray-*.bin memray-*.html

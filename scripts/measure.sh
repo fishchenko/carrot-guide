@@ -8,7 +8,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-BIN=${BIN:-.venv/bin}
+. ./.env
+BIN=$CARROT_GUIDE_VENV/bin
 URL=${SITL_URL:-tcp:127.0.0.1:5760}
 OUT=${OUT:-docs/measurements}
 

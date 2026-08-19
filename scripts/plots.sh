@@ -9,7 +9,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-BIN=${BIN:-.venv/bin}
+. ./.env
+BIN=$CARROT_GUIDE_VENV/bin
 
 plot() { "$BIN/python" -m carrot_guide.cli report "$1" --circle "$2" --plot "$3" >/dev/null; }
 
