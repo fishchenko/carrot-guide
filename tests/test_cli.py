@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from carrot_guide.cli import _parse_circle, build_parser, main
+from carrot_guide.cli import COMMANDS, ReportCommand, build_parser, main
 from carrot_guide.recording import write_samples
 
 
@@ -12,6 +12,14 @@ def test_the_parser_knows_every_experiment():
     parser = build_parser()
     for command in ("telemetry", "hold", "orbit", "latency", "report"):
         assert parser.parse_args([command, *(["x.csv"] if command == "report" else [])])
+
+
+def test_every_command_is_reachable_under_its_own_name():
+    """A command class that never makes it into COMMANDS is code nothing can run."""
+    parser = build_parser()
+    for command in COMMANDS:
+        argv = [command.name, *(["x.csv"] if command.name == "report" else [])]
+        assert parser.parse_args(argv).handler.__self__ is command
 
 
 def test_orbit_defaults_are_the_ones_the_readme_quotes():
@@ -32,12 +40,12 @@ def test_orbit_defaults_are_the_ones_the_readme_quotes():
     ],
 )
 def test_circle_overlay_parsing(text, expected):
-    assert _parse_circle(text) == expected
+    assert ReportCommand._parse_circle(text) == expected
 
 
 def test_a_malformed_circle_is_refused():
     with pytest.raises(SystemExit):
-        _parse_circle("1,2,3,4")
+        ReportCommand._parse_circle("1,2,3,4")
 
 
 def test_report_summarises_a_log_without_touching_a_socket(tmp_path, capsys, sample_row):

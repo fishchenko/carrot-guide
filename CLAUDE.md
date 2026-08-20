@@ -113,6 +113,9 @@ without a simulator.
   on stdout around the JSON and silently corrupted two committed files that way.
 - `scripts/plots.sh` is the single definition of the figures; `make plots` and `scripts/measure.sh`
   both call it, because two lists of plot commands had already drifted apart.
+- A subcommand is a `Command` subclass in `cli.py` carrying its own options and handler, listed
+  in `COMMANDS`; the flying two subclass `FlightCommand`. Kept apart, `--kd` drifted onto the
+  orbit parser and was read by nothing.
 
 ## Simulator
 
