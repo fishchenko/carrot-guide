@@ -12,16 +12,15 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from carrot_guide.guidance import Gains, HoldPoint, Limits, Orbit
-from carrot_guide.link import MavlinkLink
-from carrot_guide.metrics import summarise, summarise_latency
+from carrot_guide.link import DEFAULT_SIMULATOR_URL, MavlinkLink
+from carrot_guide.metrics import DEFAULT_SETTLE_THRESHOLD_M, summarise, summarise_latency
 from carrot_guide.mission import Vehicle, airborne, measure_command_latency
 from carrot_guide.recording import CsvRecorder, load_samples
 from carrot_guide.runner import GuidanceLaw, GuidanceRunner, RunReport
 from carrot_guide.state import NED
 from carrot_guide.telemetry import TelemetryTracker
-from carrot_guide.utils import Command, Deadline, add_summary_option, emit_json
+from carrot_guide.utils import Command, Deadline, emit_json
 
-DEFAULT_URL = "tcp:127.0.0.1:5760"
 LOG_DIR = Path("logs")
 
 
@@ -37,7 +36,9 @@ class VehicleCommand(Command):
 
     @staticmethod
     def _add_link(sub: argparse.ArgumentParser) -> None:
-        sub.add_argument("--url", default=DEFAULT_URL, help="MAVLink endpoint of the simulator")
+        sub.add_argument(
+            "--url", default=DEFAULT_SIMULATOR_URL, help="MAVLink endpoint of the simulator"
+        )
         sub.add_argument("--timeout", type=float, default=180.0, help="connect/arm timeout, s")
 
 
@@ -95,9 +96,9 @@ class FlightCommand(VehicleCommand):
             default=0.0,
             help="simulated wind turbulence (SIM_WIND_TURB); 0 is steady wind",
         )
-        sub.add_argument("--settle-threshold", type=float, default=2.0)
+        sub.add_argument("--settle-threshold", type=float, default=DEFAULT_SETTLE_THRESHOLD_M)
         sub.add_argument("--log", default=None, help="where to write the CSV log")
-        add_summary_option(sub)
+        self._add_summary(sub)
         sub.add_argument(
             "--stream-only",
             action="store_true",
@@ -258,7 +259,7 @@ class LatencyCommand(VehicleCommand):
         sub.add_argument("--altitude", type=float, default=20.0)
         sub.add_argument("--trials", type=int, default=5)
         sub.add_argument("--step-speed", type=float, default=3.0)
-        add_summary_option(sub)
+        self._add_summary(sub)
 
     def run(self, args: argparse.Namespace) -> int:
         with airborne(
@@ -283,8 +284,8 @@ class ReportCommand(Command):
             default=None,
             help="overlay the target as north,east or north,east,radius",
         )
-        sub.add_argument("--settle-threshold", type=float, default=2.0)
-        add_summary_option(sub)
+        sub.add_argument("--settle-threshold", type=float, default=DEFAULT_SETTLE_THRESHOLD_M)
+        self._add_summary(sub)
 
     def run(self, args: argparse.Namespace) -> int:
         samples = load_samples(args.log)
@@ -301,15 +302,15 @@ class ReportCommand(Command):
         return 0
 
     @staticmethod
-    def _parse_circle(text: str | None) -> tuple[tuple[float, float] | None, float | None]:
+    def _parse_circle(text: str | None) -> tuple[NED | None, float | None]:
         """Parse `north,east[,radius]` so a plot can show what was being aimed at."""
         if not text:
             return None, None
         parts = [float(part) for part in text.split(",")]
         if len(parts) == 2:
-            return (parts[0], parts[1]), None
+            return NED(parts[0], parts[1]), None
         if len(parts) == 3:
-            return (parts[0], parts[1]), parts[2]
+            return NED(parts[0], parts[1]), parts[2]
         raise SystemExit("--circle takes north,east or north,east,radius")
 
 

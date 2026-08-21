@@ -117,12 +117,9 @@ def parse_bool(text: str) -> bool:
     return text == "True"
 
 
-# Every type a text column is allowed to have. Asking for the parsers of a class with a
-# field annotated anything else raises here, which is the right moment for it: the
-# alternative is a column that reads back as a string and quietly poisons what follows.
-
-
-TEXT_PARSERS: dict[type, Callable[[str], object]] = {
+# A field annotated with anything not in here raises, which is the right moment for it:
+# the alternative is a column that reads back as a string and poisons what follows.
+TEXT_PARSER_BY_TYPE: dict[type, Callable[[str], object]] = {
     float: float,
     str: str,
     bool: parse_bool,
@@ -137,7 +134,7 @@ def parsers_for(cls: type) -> dict[str, Callable[[str], object]]:
     matching on the spelling of an annotation stops working the day one is written
     differently — it does not fail, it silently stops recognising the column.
     """
-    return {name: TEXT_PARSERS[hint] for name, hint in get_type_hints(cls).items()}
+    return {name: TEXT_PARSER_BY_TYPE[hint] for name, hint in get_type_hints(cls).items()}
 
 
 @dataclass(frozen=True)
@@ -165,14 +162,19 @@ class Command:
         self.add_arguments(sub)
         sub.set_defaults(handler=self.run)
 
+    @staticmethod
+    def _add_summary(sub: argparse.ArgumentParser) -> None:
+        """The `--summary` flag that `emit_json` writes to; see there for why it exists.
 
-def add_summary_option(sub: argparse.ArgumentParser) -> None:
-    """The `--summary` flag that `emit_json` writes to; see there for why it exists."""
-    sub.add_argument(
-        "--summary",
-        default=None,
-        help="also write the JSON summary here, out of reach of anything else on stdout",
-    )
+        On `Command` rather than loose beside it, and rather than one rung lower: every
+        subcommand that emits a summary is a `Command`, and the one that is *only* a
+        `Command` — `report` — is among them.
+        """
+        sub.add_argument(
+            "--summary",
+            default=None,
+            help="also write the JSON summary here, out of reach of anything else on stdout",
+        )
 
 
 def emit_json(payload: dict[str, Any], path: str | None = None) -> None:

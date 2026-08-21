@@ -39,6 +39,10 @@ from carrot_guide.utils import percentile
 # not picked — the same discipline the rest of the project's constants follow.
 DEFAULT_HOLD_LEAD_IN_S = 8.0
 
+# Error is judged against this distance: under it the vehicle counts as arrived. Named
+# because the CLI offers it on two subcommands and all three used to spell it `2.0`.
+DEFAULT_SETTLE_THRESHOLD_M = 2.0
+
 # Which part of the run the error statistics describe. A run that is too short to have a
 # settled stretch, or that never settles at all, still gets a summary — but it says so,
 # rather than reporting a different quantity under the same field names.
@@ -113,7 +117,7 @@ def hold_start(
 def summarise(
     samples: Sequence[Sample],
     label: str = "",
-    settle_threshold_m: float = 2.0,
+    settle_threshold_m: float = DEFAULT_SETTLE_THRESHOLD_M,
     hold_lead_in_s: float = DEFAULT_HOLD_LEAD_IN_S,
 ) -> RunSummary:
     if not samples:
@@ -134,6 +138,9 @@ def summarise(
         window, measured = WINDOW_WHOLE_RUN, list(samples)
 
     errors = [s.error_m for s in measured]
+    # Deliberately the whole run, not `measured`: the fastest the vehicle ever went is a
+    # property of the approach and of the speed limit, and it is the approach the window
+    # exists to exclude. It is the one field here the `window` does not describe.
     speeds = [math.hypot(s.vn, s.ve) for s in samples]
 
     return RunSummary(

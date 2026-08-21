@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Sequence
 
 from carrot_guide.recording import Sample
+from carrot_guide.state import NED
 
 
 def plot_run(
     samples: Sequence[Sample],
     path: str | Path,
     title: str = "",
-    centre: tuple[float, float] | None = None,
+    centre: NED | None = None,
     radius_m: float | None = None,
 ) -> Path:
     """Write a two-panel figure: track on the left, tracking error on the right."""
@@ -40,10 +41,10 @@ def plot_run(
     track.plot(east[-1], north[-1], "o", color="tab:red", label="end")
 
     if centre is not None:
-        track.plot(centre[1], centre[0], "x", color="black", label="target")
+        track.plot(centre.east, centre.north, "x", color="black", label="target")
         if radius_m:
             circle = plt.Circle(
-                (centre[1], centre[0]), radius_m, fill=False, linestyle="--", color="black"
+                (centre.east, centre.north), radius_m, fill=False, linestyle="--", color="black"
             )
             track.add_patch(circle)
 

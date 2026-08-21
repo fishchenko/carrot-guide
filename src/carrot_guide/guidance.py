@@ -62,6 +62,12 @@ def bearing_deg(offset: NED) -> float:
     return math.degrees(math.atan2(offset.east, offset.north)) % 360.0
 
 
+# Below this distance the bearing to the target is mostly noise, and yaw would chase
+# it; the vehicle holds its heading instead. Only the yaw is deadbanded — the position
+# command keeps working all the way in.
+YAW_DEADBAND_M = 1.0
+
+
 @dataclass(frozen=True)
 class HoldPoint:
     """Fly to a point and stay on it.
@@ -86,7 +92,7 @@ class HoldPoint:
     def command(self, position: NED, velocity: NED) -> VelocityCommand:
         error = self.error(position)
         yaw = None
-        if self.face_target and error.horizontal_norm > 1.0:
+        if self.face_target and error.horizontal_norm > YAW_DEADBAND_M:
             yaw = bearing_deg(error)
         return VelocityCommand(self.limits.apply(_pd_step(error, velocity, self.gains)), yaw)
 
@@ -146,6 +152,11 @@ class Orbit:
         )
 
     def command(self, position: NED, velocity: NED) -> VelocityCommand:
+        # `velocity` is unread here, and so is `gains.kd_horizontal`: this law has no
+        # derivative term at all. Turn lag is handled by aiming ahead (`lookahead_s`),
+        # which cancels the steady radius bias rather than damping anything. The
+        # parameter stays because `runner.GuidanceLaw` is what lets the loop drive
+        # either law without knowing which one it holds.
         offset = position - self.centre
         distance = offset.horizontal_norm
 

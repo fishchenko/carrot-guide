@@ -6,12 +6,17 @@ import pytest
 
 from carrot_guide.cli import COMMANDS, ReportCommand, build_parser, main
 from carrot_guide.recording import write_samples
+from carrot_guide.state import NED
 
 
 def test_the_parser_knows_every_experiment():
     parser = build_parser()
     for command in ("telemetry", "hold", "orbit", "latency", "report"):
-        assert parser.parse_args([command, *(["x.csv"] if command == "report" else [])])
+        args = parser.parse_args([command, *(["x.csv"] if command == "report" else [])])
+        # A `Namespace` is truthy whatever is in it, so assert on the parse.
+        assert args.command == command
+    with pytest.raises(SystemExit):
+        parser.parse_args(["fly-to-the-moon"])
 
 
 def test_every_command_is_reachable_under_its_own_name():
@@ -34,9 +39,9 @@ def test_orbit_defaults_are_the_ones_the_readme_quotes():
     [
         (None, (None, None)),
         ("", (None, None)),
-        ("25,0", ((25.0, 0.0), None)),
-        ("0,0,25", ((0.0, 0.0), 25.0)),
-        ("-10.5,3,12.25", ((-10.5, 3.0), 12.25)),
+        ("25,0", (NED(25.0, 0.0), None)),
+        ("0,0,25", (NED(0.0, 0.0), 25.0)),
+        ("-10.5,3,12.25", (NED(-10.5, 3.0), 12.25)),
     ],
 )
 def test_circle_overlay_parsing(text, expected):

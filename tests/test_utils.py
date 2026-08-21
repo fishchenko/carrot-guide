@@ -5,6 +5,7 @@ timeout in `link` and `mission` is built from it, and none of them should cost a
 the wall-clock time they allow in flight.
 """
 
+import dataclasses
 import json
 
 import pytest
@@ -12,18 +13,7 @@ import pytest
 from carrot_guide.recording import Sample
 from carrot_guide.utils import Deadline, emit_json, parse_bool, parsers_for, percentile
 
-
-class FakeClock:
-    """A clock that only moves when the test says so."""
-
-    def __init__(self, start: float = 1000.0) -> None:
-        self.now = start
-
-    def monotonic(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
+from conftest import FakeClock
 
 
 def test_a_deadline_counts_down_against_its_own_clock():
@@ -62,8 +52,9 @@ def test_a_deadline_is_an_instant_not_a_timer():
     clock = FakeClock()
     deadline = Deadline.after(30.0, monotonic=clock.monotonic)
 
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         deadline.at_s = clock.now + 600.0
+
 
 def test_the_string_false_does_not_read_back_as_true():
     # The trap `bool(text)` falls into, and the reason parse_bool exists.
@@ -73,16 +64,34 @@ def test_the_string_false_does_not_read_back_as_true():
 
 
 def test_columns_are_parsed_by_declared_type_not_by_name():
-    parsers = parsers_for(Sample)
-    assert parsers["t_s"] is float
-    assert parsers["mode"] is str
-    assert parsers["armed"] is parse_bool
+    # `Sample` alone cannot show this: its only bool column is called `armed`, so
+    # dispatching on the name would give the same answer. These names would all be
+    # parsed as strings by a name-based table.
+    @dataclasses.dataclass(frozen=True)
+    class Row:
+        landed: bool
+        altitude: float
+        note: str
+
+    parsers = parsers_for(Row)
+    assert parsers["landed"] is parse_bool
+    assert parsers["altitude"] is float
+    assert parsers["note"] is str
+    assert parsers_for(Sample)["armed"] is parse_bool
 
 
 def test_a_percentile_is_always_a_value_the_run_produced():
     values = [3.0, 1.0, 2.0, 5.0, 4.0]
     assert percentile(values, 0.95) in values
+    assert percentile(values, 0.5) in values
     assert percentile(values, 0.0) == 1.0
+
+
+def test_an_empty_series_summarises_rather_than_raising():
+    """`runner.LoopStats` summarises a loop that never ticked; it must not crash there.
+
+    This is also why `statistics.quantiles` is not used: it raises below two points.
+    """
     assert percentile([], 0.95) == 0.0
 
 
