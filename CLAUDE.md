@@ -13,7 +13,7 @@ MAVLink at a 10 Hz control loop. Simulator only — no hardware. `SPEC.md` is th
 ```bash
 cp .env.example .env          # required: set CARROT_GUIDE_VENV to an absolute path
 make venv                     # virtualenv + editable install with [plots,dev]
-make test                     # 115 unit tests, no simulator, ~1.6 s
+make test                     # 127 unit tests, no simulator, ~1.6 s
 make smoke                    # the installed console script actually imports
 make sitl-up                  # build & run ArduCopter SITL in Docker (first build ~15 min)
 make test-sitl                # 5 integration tests against a running SITL (~3 min cold)
