@@ -57,7 +57,9 @@ def test_settle_time_is_when_the_error_stops_violating_the_threshold():
 
 
 def test_a_late_excursion_means_the_run_never_settled():
-    samples = approach_then_hold() + [sample(10.0, 5.0)]
+    # t = 41.8 s is past the last hold sample at 41.7 s, so the series stays ordered
+    # and the excursion really is late — at t = 10.0 it was neither.
+    samples = approach_then_hold() + [sample(41.8, 5.0)]
     assert settle_time(samples, threshold_m=2.0) is None
 
 
