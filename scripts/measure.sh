@@ -56,7 +56,8 @@ run "command latency, 6 trials" latency --url "$URL" --trials 6 \
     --summary "$OUT/latency.json"
 
 echo "== plots" >&2
-BIN="$BIN" scripts/plots.sh
+# No BIN= here: plots.sh resolves it itself, and passing one was overwritten.
+scripts/plots.sh
 
 # A leak would give itself away as a peak that grows with the length of the run, so
 # each mode is profiled at two durations an order of magnitude apart. Both are flown in

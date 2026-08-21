@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Iterator
 
 from carrot_guide.guidance import HoldPoint
-from carrot_guide.link import CommandFailed, MavlinkLink
+from carrot_guide.link import DEFAULT_SIMULATOR_URL, CommandFailed, MavlinkLink
 from carrot_guide.state import NED, GlobalPosition, to_local_ned
 from carrot_guide.telemetry import TelemetryError, TelemetryTracker
 from carrot_guide.utils import Deadline
@@ -107,7 +107,7 @@ def launch(
 
 @contextmanager
 def airborne(
-    url: str = "tcp:127.0.0.1:5760",
+    url: str = DEFAULT_SIMULATOR_URL,
     altitude_m: float = 20.0,
     connect_timeout_s: float = 120.0,
     land_on_exit: bool = True,
@@ -157,10 +157,10 @@ def measure_command_latency(
     threshold = step_speed_mps * reaction_fraction
     latencies: list[float] = []
 
-    for direction in range(trials):
+    for trial in range(trials):
         _settle_at_rest(vehicle)
         # Alternate the axis so a steady wind cannot flatter or spoil every trial.
-        command = NED(step_speed_mps, 0.0) if direction % 2 == 0 else NED(0.0, step_speed_mps)
+        command = NED(step_speed_mps, 0.0) if trial % 2 == 0 else NED(0.0, step_speed_mps)
 
         sent_at = time.monotonic()
         deadline = Deadline(sent_at + timeout_s)
