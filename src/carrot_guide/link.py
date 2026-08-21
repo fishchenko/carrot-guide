@@ -15,6 +15,7 @@ from pymavlink import mavutil
 
 from carrot_guide.state import NED
 from carrot_guide.telemetry import MODE_NUMBERS, TelemetryTracker
+from carrot_guide.utils import Deadline
 
 # SET_POSITION_TARGET_LOCAL_NED type masks. A set bit means "ignore this field", so
 # both masks keep the velocity triplet and drop position, acceleration and yaw rate.
@@ -33,6 +34,11 @@ MESSAGE_IDS: dict[str, int] = {
     "HEARTBEAT": 0,
     "SYS_STATUS": 1,
 }
+
+# Longest a single blocking read may park for. Every wait here is really a deadline, and
+# reads are capped well under it so that a lapsed deadline is noticed when it lapses
+# rather than one whole read later.
+READ_SLICE_S = 0.5
 
 
 class LinkError(RuntimeError):
@@ -89,12 +95,12 @@ class MavlinkLink:
         With `budget_s` at zero this never blocks, which is what the control loop
         wants: read what has arrived, act on it, and keep the period stable.
         """
-        deadline = time.monotonic() + budget_s
+        deadline = Deadline.after(budget_s)
         count = 0
         while True:
             message = self.connection.recv_match(blocking=False)
             if message is None:
-                if time.monotonic() >= deadline:
+                if deadline.expired:
                     return count
                 time.sleep(0.001)
                 continue
@@ -116,18 +122,18 @@ class MavlinkLink:
         the one the failure paths here promise to quote. So the wait reads everything and
         filters afterwards, leaving the tracker as the single place messages accumulate.
         """
-        deadline = time.monotonic() + timeout_s
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                return None
-            message = self.connection.recv_match(blocking=True, timeout=min(0.5, remaining))
+        deadline = Deadline.after(timeout_s)
+        while not deadline.expired:
+            message = self.connection.recv_match(
+                blocking=True, timeout=deadline.slice(READ_SLICE_S)
+            )
             if message is None:
                 continue
             if tracker is not None:
                 tracker.handle(message)
             if message.get_type() == kind:
                 return message
+        return None
 
     def wait_for(
         self,
@@ -136,8 +142,8 @@ class MavlinkLink:
         timeout_s: float,
         description: str,
     ) -> None:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
+        deadline = Deadline.after(timeout_s)
+        while not deadline.expired:
             self.drain(tracker, budget_s=0.05)
             if predicate(tracker):
                 return
@@ -159,17 +165,15 @@ class MavlinkLink:
             self._expect_ack(command, tracker)
 
     def _expect_ack(self, command: int, tracker: TelemetryTracker | None = None) -> None:
-        deadline = time.monotonic() + self.ack_timeout_s
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                raise CommandFailed(f"command {command} was never acknowledged")
-            ack = self._recv_matching("COMMAND_ACK", min(0.5, remaining), tracker)
+        deadline = Deadline.after(self.ack_timeout_s)
+        while not deadline.expired:
+            ack = self._recv_matching("COMMAND_ACK", deadline.slice(READ_SLICE_S), tracker)
             if ack is None or ack.command != command:
                 continue
             if ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
                 return
             raise CommandFailed(f"command {command} rejected with result {ack.result}")
+        raise CommandFailed(f"command {command} was never acknowledged")
 
     def set_mode(self, name: str, tracker: TelemetryTracker, timeout_s: float = 10.0) -> None:
         if name not in MODE_NUMBERS:
@@ -198,9 +202,9 @@ class MavlinkLink:
         ground station does, and what lets the integration tests run against a cold
         simulator instead of one that happens to have been up for a while.
         """
-        deadline = time.monotonic() + timeout_s
+        deadline = Deadline.after(timeout_s)
         refusals = 0
-        while time.monotonic() < deadline:
+        while not deadline.expired:
             try:
                 self._send_command(command, *params, tracker=tracker)
                 return
@@ -223,7 +227,7 @@ class MavlinkLink:
         self.drain(tracker)
         if tracker.armed:
             return
-        deadline = time.monotonic() + timeout_s
+        deadline = Deadline.after(timeout_s)
         self._send_until_accepted(
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             1,
@@ -234,8 +238,7 @@ class MavlinkLink:
         # Inside the same budget, not on top of it: a caller that allowed 30 s for
         # arming meant 30 s in total, and `launch()` re-establishes the whole sequence
         # on its own schedule.
-        remaining = max(0.0, deadline - time.monotonic())
-        self.wait_for(lambda t: t.armed, tracker, min(10.0, remaining), "the vehicle to arm")
+        self.wait_for(lambda t: t.armed, tracker, deadline.slice(10.0), "the vehicle to arm")
 
     def disarm(self, tracker: TelemetryTracker, timeout_s: float = 10.0, force: bool = False) -> None:
         self._send_command(
@@ -299,14 +302,12 @@ class MavlinkLink:
             float(value),
             mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
         )
-        deadline = time.monotonic() + timeout_s
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                raise CommandFailed(f"parameter {name} was not confirmed")
-            message = self._recv_matching("PARAM_VALUE", min(0.5, remaining), tracker)
+        deadline = Deadline.after(timeout_s)
+        while not deadline.expired:
+            message = self._recv_matching("PARAM_VALUE", deadline.slice(READ_SLICE_S), tracker)
             if message is not None and message.param_id.strip("\x00") == name:
                 return message.param_value
+        raise CommandFailed(f"parameter {name} was not confirmed")
 
     def send_velocity(self, velocity: NED, yaw_deg: float | None = None) -> None:
         """Command a velocity in the local NED frame for one control cycle.

@@ -54,7 +54,10 @@ without a simulator.
 - `runner.py` — `FixedRateLoop` + `GuidanceRunner`, and the `GuidanceLaw`/`VehicleLink` Protocols
   that define what the loop needs from either side.
 - `mission.py` — `launch()`, `airborne()` context manager, latency measurement.
-- `stats.py` — `percentile()`, shared by the loop and the analysis so neither imports the other.
+- `utils.py` — everything general, types and functions alike: `Deadline` (the monotonic countdown
+  every wait in `link`/`mission`/`cli` is built from), `Command` (the argparse subcommand base),
+  `percentile()` shared by the loop and the analysis so neither imports the other, the CSV text
+  parsers, and `emit_json()` with its flag.
 - `metrics.py`, `recording.py`, `plots.py`, `cli.py` — summaries, CSV log, figures, subcommands.
 
 ### Invariants worth not breaking
@@ -113,9 +116,20 @@ without a simulator.
   on stdout around the JSON and silently corrupted two committed files that way.
 - `scripts/plots.sh` is the single definition of the figures; `make plots` and `scripts/measure.sh`
   both call it, because two lists of plot commands had already drifted apart.
-- A subcommand is a `Command` subclass in `cli.py` carrying its own options and handler, listed
-  in `COMMANDS`; the flying two subclass `FlightCommand`. Kept apart, `--kd` drifted onto the
-  orbit parser and was read by nothing.
+- **`utils.py` holds everything general**, types and functions alike, and admits only what would
+  read the same way *verbatim* in a project with no aircraft in it. Liftable is necessary but
+  not sufficient: `FixedRateLoop` would lift cleanly and stays in `runner` anyway, because a
+  10 Hz control loop is what this project *is*. `utils` takes what is incidental to the work —
+  a countdown, a percentile, an argparse base — never the work itself. Anything that fails the
+  test keeps its domain half at home: `Command` moved, the `--url` option group it used to carry
+  stayed behind on `cli.VehicleCommand`.
+- A subcommand is a `utils.Command` subclass in `cli.py` carrying its own options and its own
+  handler, listed in `COMMANDS`. Each rung of the ladder owns the options at its level and
+  nothing else: `Command` is generic argparse plumbing and lives in `utils`; `VehicleCommand`
+  adds `--url`/`--timeout` for the four that talk to a vehicle (`report` does not); the flying
+  two subclass `FlightCommand`. Kept apart, `--kd` drifted onto the orbit parser and was read
+  by nothing. Shared option groups belong on the rung that owns them, never as a loose
+  module-level function a subclass has to remember to call.
 
 ## Simulator
 

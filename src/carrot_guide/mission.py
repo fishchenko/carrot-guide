@@ -16,6 +16,7 @@ from carrot_guide.guidance import HoldPoint
 from carrot_guide.link import CommandFailed, MavlinkLink
 from carrot_guide.state import NED, GlobalPosition, to_local_ned
 from carrot_guide.telemetry import TelemetryError, TelemetryTracker
+from carrot_guide.utils import Deadline
 
 
 @dataclass
@@ -64,14 +65,13 @@ def launch(
     has been up a while and fails against a fresh one. This checks the state it needs
     immediately before it needs it.
     """
-    deadline = time.monotonic() + timeout_s
+    deadline = Deadline.after(timeout_s)
     last_error: Exception | None = None
 
-    while time.monotonic() < deadline:
-        remaining = deadline - time.monotonic()
+    while not deadline.expired:
         try:
-            link.set_mode("GUIDED", tracker, timeout_s=min(5.0, remaining))
-            link.arm(tracker, timeout_s=min(30.0, remaining))
+            link.set_mode("GUIDED", tracker, timeout_s=deadline.slice(5.0))
+            link.arm(tracker, timeout_s=deadline.slice(30.0))
 
             if tracker.mode != "GUIDED":
                 # It fell back while we were arming; start over rather than command a
@@ -85,12 +85,11 @@ def launch(
             # unclamped it is the one step that can carry the whole retry loop well
             # past the deadline the caller set — a `launch(timeout_s=…)` that reports
             # giving up a minute after the time it was given is not a timeout.
-            remaining = max(0.0, deadline - time.monotonic())
             link.takeoff(
                 altitude_m,
                 tracker,
-                timeout_s=min(60.0, remaining),
-                accept_timeout_s=min(6.0, remaining),
+                timeout_s=deadline.slice(60.0),
+                accept_timeout_s=deadline.slice(6.0),
                 retry_every_s=1.0,
             )
             return
@@ -164,8 +163,8 @@ def measure_command_latency(
         command = NED(step_speed_mps, 0.0) if direction % 2 == 0 else NED(0.0, step_speed_mps)
 
         sent_at = time.monotonic()
-        deadline = sent_at + timeout_s
-        while time.monotonic() < deadline:
+        deadline = Deadline(sent_at + timeout_s)
+        while not deadline.expired:
             link.send_velocity(command)
             link.drain(tracker, budget_s=0.02)
             if tracker.velocity.horizontal_norm >= threshold:
@@ -184,8 +183,8 @@ def _settle_at_rest(vehicle: Vehicle, tolerance_mps: float = 0.2, timeout_s: flo
     link.drain(tracker, budget_s=0.1)
     hold = HoldPoint(target=vehicle.position_ned)
 
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
+    deadline = Deadline.after(timeout_s)
+    while not deadline.expired:
         link.drain(tracker, budget_s=0.05)
         state = tracker.snapshot()
         command = hold.command(vehicle.position_ned, state.velocity)

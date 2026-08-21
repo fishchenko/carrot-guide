@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from carrot_guide.recording import Sample
-from carrot_guide.stats import percentile
+from carrot_guide.utils import percentile
 
 # How long after reaching the target the statistics start.
 #

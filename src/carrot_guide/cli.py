@@ -7,10 +7,7 @@ reproducible and its numbers can go straight into the README without retyping.
 from __future__ import annotations
 
 import argparse
-import json
-import sys
-import time
-from dataclasses import astuple, dataclass
+from dataclasses import astuple
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -22,61 +19,29 @@ from carrot_guide.recording import CsvRecorder, load_samples
 from carrot_guide.runner import GuidanceLaw, GuidanceRunner, RunReport
 from carrot_guide.state import NED
 from carrot_guide.telemetry import TelemetryTracker
+from carrot_guide.utils import Command, Deadline, add_summary_option, emit_json
 
 DEFAULT_URL = "tcp:127.0.0.1:5760"
 LOG_DIR = Path("logs")
 
 
-@dataclass(frozen=True)
-class Command:
-    """One subcommand: the options it takes, and what it does with them."""
+class VehicleCommand(Command):
+    """A subcommand that talks to a vehicle — every one but `report`.
 
-    name: str
-    help: str
-
-    def add_arguments(self, sub: argparse.ArgumentParser) -> None:
-        raise NotImplementedError
-
-    def run(self, args: argparse.Namespace) -> int:
-        raise NotImplementedError
-
-    def register(self, subparsers: argparse._SubParsersAction) -> None:
-        sub = subparsers.add_parser(self.name, help=self.help)
-        self.add_arguments(sub)
-        sub.set_defaults(handler=self.run)
+    Owns the option group that is this program's own rather than a property of
+    subcommands in general: where the vehicle is, and how long to wait for it. That
+    group is why this sits between `utils.Command` and the four that use it; on the
+    generic base it would have carried a MAVLink endpoint into a module that must not
+    know what one is.
+    """
 
     @staticmethod
     def _add_link(sub: argparse.ArgumentParser) -> None:
         sub.add_argument("--url", default=DEFAULT_URL, help="MAVLink endpoint of the simulator")
         sub.add_argument("--timeout", type=float, default=180.0, help="connect/arm timeout, s")
 
-    @staticmethod
-    def _add_summary(sub: argparse.ArgumentParser) -> None:
-        sub.add_argument(
-            "--summary",
-            default=None,
-            help="also write the JSON summary here, out of reach of anything else on stdout",
-        )
 
-    @staticmethod
-    def _emit(payload: dict[str, Any], summary_path: str | None = None) -> None:
-        """Print the run's summary, and write it somewhere exact if asked to.
-
-        `--summary` exists because capturing stdout is not safe enough for an artefact the
-        README quotes: run under `memray`, the profiler's own banner lands on stdout either
-        side of the JSON, and two of the committed measurement files were silently
-        unparseable because of it. Writing the file directly puts the summary out of reach
-        of anything else that prints.
-        """
-        text = json.dumps(payload, indent=2, ensure_ascii=False)
-        sys.stdout.write(text + "\n")
-        if summary_path:
-            path = Path(summary_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text + "\n", encoding="utf-8")
-
-
-class TelemetryCommand(Command):
+class TelemetryCommand(VehicleCommand):
     """F1: connect and show what the vehicle is reporting."""
 
     def add_arguments(self, sub: argparse.ArgumentParser) -> None:
@@ -87,9 +52,9 @@ class TelemetryCommand(Command):
         link = MavlinkLink.connect(args.url, timeout_s=args.timeout)
         tracker = TelemetryTracker()
         link.request_streams()
-        deadline = time.monotonic() + args.seconds
+        deadline = Deadline.after(args.seconds)
         try:
-            while time.monotonic() < deadline:
+            while not deadline.expired:
                 link.drain(tracker, budget_s=0.5)
                 if not tracker.has_position:
                     print("waiting for a position estimate...")
@@ -108,7 +73,7 @@ class TelemetryCommand(Command):
         return 0
 
 
-class FlightCommand(Command):
+class FlightCommand(VehicleCommand):
     """Takes off, flies one guidance law for the requested time, lands, reports.
 
     The law comes from a subclass hook because it can only be constructed once the
@@ -132,7 +97,7 @@ class FlightCommand(Command):
         )
         sub.add_argument("--settle-threshold", type=float, default=2.0)
         sub.add_argument("--log", default=None, help="where to write the CSV log")
-        self._add_summary(sub)
+        add_summary_option(sub)
         sub.add_argument(
             "--stream-only",
             action="store_true",
@@ -166,7 +131,7 @@ class FlightCommand(Command):
                 report = runner.fly(
                     self.build_law(args), args.seconds, sink=recorder, label=self.name
                 )
-        self._emit(
+        emit_json(
             {
                 "run": self.name,
                 "log": str(log_path),
@@ -285,7 +250,7 @@ class OrbitCommand(FlightCommand):
         return {"centre_ned": list(astuple(self._point(args))), "radius_m": args.radius}
 
 
-class LatencyCommand(Command):
+class LatencyCommand(VehicleCommand):
     """Measure command-to-reaction latency over several velocity steps."""
 
     def add_arguments(self, sub: argparse.ArgumentParser) -> None:
@@ -293,7 +258,7 @@ class LatencyCommand(Command):
         sub.add_argument("--altitude", type=float, default=20.0)
         sub.add_argument("--trials", type=int, default=5)
         sub.add_argument("--step-speed", type=float, default=3.0)
-        self._add_summary(sub)
+        add_summary_option(sub)
 
     def run(self, args: argparse.Namespace) -> int:
         with airborne(
@@ -303,7 +268,7 @@ class LatencyCommand(Command):
                 vehicle, trials=args.trials, step_speed_mps=args.step_speed
             )
         summary = summarise_latency(latencies).as_dict()
-        self._emit({"run": self.name, "latency": summary}, args.summary)
+        emit_json({"run": self.name, "latency": summary}, args.summary)
         return 0
 
 
@@ -319,7 +284,7 @@ class ReportCommand(Command):
             help="overlay the target as north,east or north,east,radius",
         )
         sub.add_argument("--settle-threshold", type=float, default=2.0)
-        self._add_summary(sub)
+        add_summary_option(sub)
 
     def run(self, args: argparse.Namespace) -> int:
         samples = load_samples(args.log)
@@ -332,7 +297,7 @@ class ReportCommand(Command):
             payload["plot"] = str(
                 plot_run(samples, args.plot, title=summary.label, centre=centre, radius_m=radius)
             )
-        self._emit(payload, args.summary)
+        emit_json(payload, args.summary)
         return 0
 
     @staticmethod

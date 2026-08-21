@@ -15,8 +15,8 @@ from typing import Callable, Iterator, Protocol
 from carrot_guide.guidance import VelocityCommand
 from carrot_guide.recording import Sample, SampleSink
 from carrot_guide.state import NED, VehicleState, to_local_ned
-from carrot_guide.stats import percentile
 from carrot_guide.telemetry import TelemetryTracker
+from carrot_guide.utils import percentile
 
 
 class GuidanceLaw(Protocol):

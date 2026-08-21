@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import IO, Iterable, Protocol
 
+from carrot_guide.utils import parsers_for
+
 
 @dataclass(frozen=True)
 class Sample:
@@ -39,6 +41,8 @@ COLUMNS = [field.name for field in fields(Sample)]
 
 
 class SampleSink(Protocol):
+    """Where the control loop puts a finished cycle; see the two below."""
+
     def write(self, sample: Sample) -> None: ...
 
 
@@ -67,7 +71,7 @@ class CsvRecorder:
 
 
 class MemorySink:
-    """In-memory sink, used by tests and by short runs that only need the summary."""
+    """In-memory sink, so a test can read back what the loop wrote without a file."""
 
     def __init__(self) -> None:
         self.samples: list[Sample] = []
@@ -76,30 +80,21 @@ class MemorySink:
         self.samples.append(sample)
 
 
-_FLOAT_FIELDS = {
-    field.name for field in fields(Sample) if field.type in ("float", float)
-}
+# One parser per column, keyed by the field's declared type rather than by its name:
+# `armed` is read back as a bool because it is declared one, not because of what it
+# is called. A column annotated with a type the table does not cover raises here.
+_COLUMN_PARSERS = parsers_for(Sample)
 
 
 def load_samples(path: str | Path) -> list[Sample]:
     """Read a log back; the plotting and metrics tools work off this."""
     with Path(path).open(newline="", encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
-    return [
-        Sample(
-            **{
-                name: (
-                    float(row[name])
-                    if name in _FLOAT_FIELDS
-                    else row[name] == "True"
-                    if name == "armed"
-                    else row[name]
-                )
-                for name in COLUMNS
-            }
-        )
-        for row in rows
-    ]
+        return [_sample_from_row(row) for row in csv.DictReader(handle)]
+
+
+def _sample_from_row(row: dict[str, str]) -> Sample:
+    """Rebuild one cycle from its CSV row, parsing each column by its declared type."""
+    return Sample(**{name: parse(row[name]) for name, parse in _COLUMN_PARSERS.items()})
 
 
 def write_samples(path: str | Path, samples: Iterable[Sample]) -> None:
