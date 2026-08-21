@@ -6,7 +6,7 @@ The `Message` stub lives in conftest; see it for why the tracker never needs mor
 import pytest
 
 from carrot_guide.telemetry import (
-    ARMED_FLAG,
+    MAV_MODE_FLAG_SAFETY_ARMED,
     TelemetryError,
     TelemetryTracker,
     mode_name,
@@ -49,10 +49,16 @@ def test_velocity_is_scaled_from_centimetres_per_second():
     assert velocity.down == pytest.approx(0.25)
 
 
-def test_heading_is_scaled_and_wrapped():
+def test_heading_is_scaled_from_centidegrees():
     tracker = TelemetryTracker()
     tracker.handle(global_position(hdg=35_999))
     assert tracker.snapshot().heading_deg == pytest.approx(359.99)
+
+
+def test_a_heading_of_a_full_turn_wraps_to_zero():
+    tracker = TelemetryTracker()
+    tracker.handle(global_position(hdg=36_000))
+    assert tracker.snapshot().heading_deg == pytest.approx(0.0)
 
 
 def test_an_unknown_heading_keeps_the_last_good_one():
@@ -64,7 +70,7 @@ def test_an_unknown_heading_keeps_the_last_good_one():
 
 def test_heartbeat_carries_the_arm_flag_and_the_mode():
     tracker = TelemetryTracker()
-    tracker.handle(Message("HEARTBEAT", base_mode=ARMED_FLAG | 0b1, custom_mode=4))
+    tracker.handle(Message("HEARTBEAT", base_mode=MAV_MODE_FLAG_SAFETY_ARMED | 0b1, custom_mode=4))
     assert tracker.armed is True
     assert tracker.mode == "GUIDED"
 

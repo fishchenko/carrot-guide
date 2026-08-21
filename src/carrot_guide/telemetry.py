@@ -13,12 +13,13 @@ from typing import Any
 
 from carrot_guide.state import GlobalPosition, NED, VehicleState
 
-# MAV_MODE_FLAG_SAFETY_ARMED. Spelled out rather than imported so this module stays
-# free of pymavlink and can be exercised with plain stubs.
-ARMED_FLAG = 0b1000_0000
+# Spelled out rather than imported, so this module stays free of pymavlink and can be
+# exercised with plain stubs.
+MAV_MODE_FLAG_SAFETY_ARMED = 0b1000_0000
+HEADING_UNKNOWN = 65535
 
 # ArduCopter custom_mode values, the subset this project ever asks for or asserts on.
-COPTER_MODES: dict[int, str] = {
+MODE_NAME_BY_NUMBER: dict[int, str] = {
     0: "STABILIZE",
     1: "ACRO",
     2: "ALT_HOLD",
@@ -32,11 +33,13 @@ COPTER_MODES: dict[int, str] = {
     20: "GUIDED_NOGPS",
 }
 
-MODE_NUMBERS: dict[str, int] = {name: number for number, name in COPTER_MODES.items()}
+MODE_NUMBER_BY_NAME: dict[str, int] = {
+    name: number for number, name in MODE_NAME_BY_NUMBER.items()
+}
 
 
 def mode_name(custom_mode: int) -> str:
-    return COPTER_MODES.get(custom_mode, f"MODE_{custom_mode}")
+    return MODE_NAME_BY_NUMBER.get(custom_mode, f"MODE_{custom_mode}")
 
 
 class TelemetryError(RuntimeError):
@@ -70,7 +73,7 @@ class TelemetryTracker:
         if kind == "GLOBAL_POSITION_INT":
             self._handle_global_position(message)
         elif kind == "HEARTBEAT":
-            self.armed = bool(message.base_mode & ARMED_FLAG)
+            self.armed = bool(message.base_mode & MAV_MODE_FLAG_SAFETY_ARMED)
             self.mode = mode_name(message.custom_mode)
         elif kind == "STATUSTEXT":
             self.status_texts.append(message.text.strip())
@@ -92,7 +95,8 @@ class TelemetryTracker:
             east=message.vy / 100.0,
             down=message.vz / 100.0,
         )
-        self.heading_deg = (message.hdg / 100.0) % 360.0 if message.hdg != 65535 else self.heading_deg
+        if message.hdg != HEADING_UNKNOWN:
+            self.heading_deg = (message.hdg / 100.0) % 360.0
         self.timestamp_s = message.time_boot_ms / 1000.0
         self.position_updates += 1
 

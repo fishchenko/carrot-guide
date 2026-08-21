@@ -6,15 +6,35 @@ without a socket, a simulator or a wait.
 """
 
 from collections import deque
+from dataclasses import dataclass
 
 import pytest
 from pymavlink import mavutil
 
-from carrot_guide.link import CommandFailed, MavlinkLink
+from carrot_guide.link import (
+    IGNORE_ALL_BUT_VELOCITY,
+    IGNORE_ALL_BUT_VELOCITY_AND_YAW,
+    CommandFailed,
+    MavlinkLink,
+)
 from carrot_guide.state import NED
-from carrot_guide.telemetry import ARMED_FLAG, TelemetryTracker
+from carrot_guide.telemetry import MAV_MODE_FLAG_SAFETY_ARMED, TelemetryTracker
 
 from conftest import Message
+
+
+@dataclass(frozen=True)
+class Target:
+    """What reached the wire.
+
+    The mask is kept because it is the actual contract: a yaw of 0.0 means nothing
+    until you know whether the mask told the autopilot to ignore it.
+    """
+
+    velocity: NED
+    yaw_rad: float
+    mask: int
+
 
 ARM_COMMAND = mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM
 ACCEPTED = mavutil.mavlink.MAV_RESULT_ACCEPTED
@@ -22,7 +42,7 @@ FAILED = mavutil.mavlink.MAV_RESULT_FAILED
 
 
 def heartbeat(armed: bool, mode: int = 4) -> Message:
-    return Message("HEARTBEAT", base_mode=ARMED_FLAG if armed else 0, custom_mode=mode)
+    return Message("HEARTBEAT", base_mode=MAV_MODE_FLAG_SAFETY_ARMED if armed else 0, custom_mode=mode)
 
 
 class FakeConnection:
@@ -35,7 +55,7 @@ class FakeConnection:
         self.mav = self
         self.inbox: deque[Message] = deque()
         self.commands: list[tuple[int, tuple[float, ...]]] = []
-        self.targets: list[tuple[NED, float | None]] = []
+        self.targets: list[Target] = []
         self.params: list[tuple[str, float]] = []
         self.arm_results = deque(arm_results or [ACCEPTED])
         self.reject: set[int] = set()  # commands answered with a refusal
@@ -56,7 +76,7 @@ class FakeConnection:
             self.inbox.append(heartbeat(armed=bool(params[0])))
 
     def set_position_target_local_ned_send(self, *args):
-        self.targets.append((NED(args[8], args[9], args[10]), args[14]))
+        self.targets.append(Target(NED(args[8], args[9], args[10]), args[14], args[4]))
 
     def param_set_send(self, system, component, name, value, param_type):
         self.params.append((name.decode("ascii"), value))
@@ -180,15 +200,19 @@ def test_a_parameter_read_back_does_not_swallow_the_telemetry_around_it():
 def test_velocity_targets_carry_the_command_and_the_yaw():
     link, connection, _ = build()
     link.send_velocity(NED(1.0, -2.0, 0.5), yaw_deg=90.0)
-    velocity, yaw = connection.targets[-1]
-    assert velocity == NED(1.0, -2.0, 0.5)
-    assert yaw == pytest.approx(1.5708, abs=1e-4)  # radians on the wire
+    target = connection.targets[-1]
+    assert target.velocity == NED(1.0, -2.0, 0.5)
+    assert target.yaw_rad == pytest.approx(1.5708, abs=1e-4)  # radians on the wire
+    assert target.mask == IGNORE_ALL_BUT_VELOCITY_AND_YAW
 
 
 def test_a_velocity_target_without_yaw_masks_the_yaw_field():
     link, connection, _ = build()
     link.send_velocity(NED(1.0, 0.0, 0.0))
-    assert connection.targets[-1][1] == 0.0
+    target = connection.targets[-1]
+    # The mask is what makes this a masked field rather than a commanded zero.
+    assert target.mask == IGNORE_ALL_BUT_VELOCITY
+    assert target.yaw_rad == 0.0
 
 
 def test_draining_feeds_every_queued_message_to_the_tracker():

@@ -14,7 +14,7 @@ from typing import Any, Callable, Iterable
 from pymavlink import mavutil
 
 from carrot_guide.state import NED
-from carrot_guide.telemetry import MODE_NUMBERS, TelemetryTracker
+from carrot_guide.telemetry import MODE_NUMBER_BY_NAME, TelemetryTracker
 from carrot_guide.utils import Deadline
 
 # SET_POSITION_TARGET_LOCAL_NED type masks. A set bit means "ignore this field", so
@@ -35,10 +35,17 @@ MESSAGE_IDS: dict[str, int] = {
     "SYS_STATUS": 1,
 }
 
-# Longest a single blocking read may park for. Every wait here is really a deadline, and
-# reads are capped well under it so that a lapsed deadline is noticed when it lapses
+# Capped well under any wait it serves, so a lapsed deadline is noticed when it lapses
 # rather than one whole read later.
-READ_SLICE_S = 0.5
+MAX_BLOCKING_READ_S = 0.5
+
+# One spelling for the whole project: the default here used to be a seventh endpoint
+# ("udp:127.0.0.1:14550") that nothing else named.
+DEFAULT_SIMULATOR_URL = "tcp:127.0.0.1:5760"
+
+# MAVLink's documented token for param2 of MAV_CMD_COMPONENT_ARM_DISARM: disarm even
+# though the vehicle believes it is still flying.
+FORCE_DISARM_MAGIC = 21196.0
 
 
 class LinkError(RuntimeError):
@@ -62,7 +69,7 @@ class MavlinkLink:
     ack_timeout_s: float = 5.0
 
     @classmethod
-    def connect(cls, url: str = "udp:127.0.0.1:14550", timeout_s: float = 60.0) -> "MavlinkLink":
+    def connect(cls, url: str = DEFAULT_SIMULATOR_URL, timeout_s: float = 60.0) -> "MavlinkLink":
         connection = mavutil.mavlink_connection(url, autoreconnect=True)
         link = cls(connection)
         link.wait_heartbeat(timeout_s)
@@ -125,7 +132,7 @@ class MavlinkLink:
         deadline = Deadline.after(timeout_s)
         while not deadline.expired:
             message = self.connection.recv_match(
-                blocking=True, timeout=deadline.slice(READ_SLICE_S)
+                blocking=True, timeout=deadline.slice(MAX_BLOCKING_READ_S)
             )
             if message is None:
                 continue
@@ -167,7 +174,7 @@ class MavlinkLink:
     def _expect_ack(self, command: int, tracker: TelemetryTracker | None = None) -> None:
         deadline = Deadline.after(self.ack_timeout_s)
         while not deadline.expired:
-            ack = self._recv_matching("COMMAND_ACK", deadline.slice(READ_SLICE_S), tracker)
+            ack = self._recv_matching("COMMAND_ACK", deadline.slice(MAX_BLOCKING_READ_S), tracker)
             if ack is None or ack.command != command:
                 continue
             if ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
@@ -176,9 +183,9 @@ class MavlinkLink:
         raise CommandFailed(f"command {command} was never acknowledged")
 
     def set_mode(self, name: str, tracker: TelemetryTracker, timeout_s: float = 10.0) -> None:
-        if name not in MODE_NUMBERS:
+        if name not in MODE_NUMBER_BY_NAME:
             raise ValueError(f"unknown copter mode {name!r}")
-        self.connection.set_mode(MODE_NUMBERS[name])
+        self.connection.set_mode(MODE_NUMBER_BY_NAME[name])
         self.wait_for(lambda t: t.mode == name, tracker, timeout_s, f"mode {name}")
 
     def wait_ready_to_arm(self, tracker: TelemetryTracker, timeout_s: float = 120.0) -> None:
@@ -240,11 +247,21 @@ class MavlinkLink:
         # on its own schedule.
         self.wait_for(lambda t: t.armed, tracker, deadline.slice(10.0), "the vehicle to arm")
 
-    def disarm(self, tracker: TelemetryTracker, timeout_s: float = 10.0, force: bool = False) -> None:
+    def disarm(
+        self,
+        tracker: TelemetryTracker,
+        timeout_s: float = 10.0,
+        force: bool = False,
+    ) -> None:
+        """Command a disarm. SPEC F2 asks for it; the flying paths reach it through `land`.
+
+        `force` is the in-air disarm, which the autopilot refuses without the magic token
+        because it is how you drop a vehicle out of the sky.
+        """
         self._send_command(
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0,
-            21196.0 if force else 0.0,
+            FORCE_DISARM_MAGIC if force else 0.0,
             tracker=tracker,
         )
         self.wait_for(lambda t: not t.armed, tracker, timeout_s, "the vehicle to disarm")
@@ -304,7 +321,9 @@ class MavlinkLink:
         )
         deadline = Deadline.after(timeout_s)
         while not deadline.expired:
-            message = self._recv_matching("PARAM_VALUE", deadline.slice(READ_SLICE_S), tracker)
+            message = self._recv_matching(
+                "PARAM_VALUE", deadline.slice(MAX_BLOCKING_READ_S), tracker
+            )
             if message is not None and message.param_id.strip("\x00") == name:
                 return message.param_value
         raise CommandFailed(f"parameter {name} was not confirmed")
