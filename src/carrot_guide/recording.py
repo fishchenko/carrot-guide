@@ -7,7 +7,7 @@ open is worth more here than a compact binary one.
 from __future__ import annotations
 
 import csv
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import IO, Iterable, Protocol
 
@@ -37,7 +37,15 @@ class Sample:
     armed: bool
 
 
-COLUMNS = [field.name for field in fields(Sample)]
+# One parser per column, keyed by the field's declared type rather than by its name:
+# `armed` is read back as a bool because it is declared one, not because it is called
+# that. A column annotated with a type the table does not cover raises here.
+_COLUMN_PARSERS = parsers_for(Sample)
+
+# Derived from the parser table rather than from `fields(Sample)` a second time: two
+# derivations of one list agree until the day they do not, and the CSV header and the
+# CSV reader are exactly the pair that must never disagree.
+COLUMNS = list(_COLUMN_PARSERS)
 
 
 class SampleSink(Protocol):
@@ -78,12 +86,6 @@ class MemorySink:
 
     def write(self, sample: Sample) -> None:
         self.samples.append(sample)
-
-
-# One parser per column, keyed by the field's declared type rather than by its name:
-# `armed` is read back as a bool because it is declared one, not because of what it
-# is called. A column annotated with a type the table does not cover raises here.
-_COLUMN_PARSERS = parsers_for(Sample)
 
 
 def load_samples(path: str | Path) -> list[Sample]:
