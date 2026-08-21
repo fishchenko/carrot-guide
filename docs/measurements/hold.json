@@ -26,7 +26,7 @@
   ],
   "loop": {
     "target_hz": 10.0,
-    "ticks": 599.0,
+    "ticks": 600.0,
     "mean_hz": 10.0,
     "jitter_stdev_ms": 0.573,
     "max_lateness_ms": 9.923,

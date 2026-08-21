@@ -1,198 +1,182 @@
-"""Timing tests for the control loop, run against a fake clock.
+"""The runner closed around a fake vehicle: guidance, transport and logging together.
 
-Nothing here sleeps: the clock only moves when the test says it does, so a
-twenty-minute schedule is checked in a millisecond and the assertions are exact
-instead of tolerant.
+This is the closest thing to an integration test that needs neither a socket nor a
+simulator. The fake vehicle integrates whatever velocity it is commanded, so the test
+covers the wiring — frame conversion, command dispatch, sample recording — and fails
+loudly if the runner ever feeds a law the wrong frame.
 """
 
 import pytest
 
-from carrot_guide.runner import FixedRateLoop, measure_sleep_overshoot
+from carrot_guide.guidance import HoldPoint, Limits
+from carrot_guide.recording import MemorySink
+from carrot_guide.runner import FixedRateLoop, GuidanceRunner, StaleTelemetry
+from carrot_guide.state import NED, GlobalPosition, from_local_ned
+from carrot_guide.telemetry import TelemetryTracker
+
+from conftest import FakeClock
+
+ORIGIN = GlobalPosition(50.4501, 30.5234, 0.0)
 
 
-class FakeClock:
-    """A clock that advances only on `sleep`, plus whatever the test adds."""
+class FakeVehicle:
+    """Stands in for `MavlinkLink`, integrating commands into the tracker's state."""
 
-    def __init__(self, start: float = 1000.0, sleep_overshoot: float = 0.0) -> None:
-        self.now = start
-        self.sleep_overshoot = sleep_overshoot
-        self.sleeps: list[float] = []
+    def __init__(self, tracker: TelemetryTracker, dt: float, start: NED) -> None:
+        self.tracker = tracker
+        self.dt = dt
+        self.position = start
+        self.commands: list[tuple[NED, float | None]] = []
+        self._publish(NED(0.0, 0.0, 0.0))
 
-    def monotonic(self) -> float:
-        return self.now
+    silent = False  # set by the failsafe test to simulate a dead position stream
 
-    def sleep(self, seconds: float) -> None:
-        self.sleeps.append(seconds)
-        self.now += max(0.0, seconds) + self.sleep_overshoot
+    def _publish(self, velocity: NED) -> None:
+        if self.silent:
+            return
+        self.tracker.position = from_local_ned(self.position, ORIGIN)
+        self.tracker.velocity = velocity
+        self.tracker.armed = True
+        self.tracker.mode = "GUIDED"
+        self.tracker.position_updates += 1
 
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
+    def drain(self, tracker: TelemetryTracker, budget_s: float = 0.0) -> int:
+        return 1
 
-
-class SpinningClock(FakeClock):
-    """A clock where reading the time costs time, so a busy-wait terminates."""
-
-    def __init__(self, step: float = 0.0005, **kwargs: float) -> None:
-        super().__init__(**kwargs)
-        self.step = step
-
-    def monotonic(self) -> float:
-        self.now += self.step
-        return self.now
+    def send_velocity(self, velocity: NED, yaw_deg: float | None = None) -> None:
+        self.commands.append((velocity, yaw_deg))
+        self.position = self.position + velocity.scaled(self.dt)
+        self._publish(velocity)
 
 
-def make_loop(clock: FakeClock, hz: float = 10.0, spin_slack_s: float = 0.0) -> FixedRateLoop:
-    return FixedRateLoop(
-        hz=hz, monotonic=clock.monotonic, sleep=clock.sleep, spin_slack_s=spin_slack_s
+def _runner_on_a_fake_clock(
+    vehicle: "FakeVehicle", tracker: TelemetryTracker, hz: float
+) -> tuple[GuidanceRunner, FakeClock]:
+    """A runner whose loop is driven by a clock the caller can inspect.
+
+    Handing the clock back is the point: a test that asserts on a clock the runner does
+    not actually use asserts nothing, and one here did exactly that.
+    """
+    clock = FakeClock()
+    runner = GuidanceRunner(
+        link=vehicle,
+        tracker=tracker,
+        rate_hz=hz,
+        loop_factory=lambda rate: FixedRateLoop(
+            rate, monotonic=clock.monotonic, sleep=clock.sleep, spin_slack_s=0.0
+        ),
     )
+    return runner, clock
 
 
-def test_loop_runs_the_expected_number_of_ticks():
-    clock = FakeClock()
-    loop = make_loop(clock)
-    assert len([t.index for t in loop.ticks(1.0)]) == 11  # t = 0.0 .. 1.0 inclusive
+def build(start: NED, hz: float = 10.0) -> tuple[GuidanceRunner, FakeVehicle]:
+    """A runner over a fake vehicle. Tests that need the clock use the helper directly."""
+    tracker = TelemetryTracker()
+    tracker.set_origin(ORIGIN)
+    vehicle = FakeVehicle(tracker, dt=1.0 / hz, start=start)
+    runner, _ = _runner_on_a_fake_clock(vehicle, tracker, hz)
+    return runner, vehicle
 
 
-def test_loop_holds_its_period_when_the_body_costs_time():
-    clock = FakeClock()
-    loop = make_loop(clock)
-    for _ in loop.ticks(2.0):
-        clock.advance(0.03)  # the body takes 30 ms of the 100 ms budget
-    assert loop.periods == pytest.approx([0.1] * len(loop.periods))
-    assert max(loop.lateness) == pytest.approx(0.0)
+def test_the_runner_flies_the_law_to_the_target():
+    runner, _ = build(start=NED(0.0, 0.0, -20.0))
+    law = HoldPoint(target=NED(30.0, 10.0, -20.0), limits=Limits(max_horizontal_speed=5.0))
+    report = runner.fly(law, duration_s=60.0, label="hold")
+    assert report.samples[-1].error_m < 0.1
 
 
-def test_loop_does_not_drift_over_a_long_run():
-    clock = FakeClock()
-    loop = make_loop(clock, hz=20.0)
-    elapsed = []
-    for tick in loop.ticks(600.0):
-        elapsed.append(tick.elapsed_s)
-        clock.advance(0.011)  # a body that costs a fifth of the period
-    # Ten minutes at 20 Hz: every tick still lands on its own multiple of the period.
-    # Sleeping for a fixed period instead would have lost 0.011 s per cycle — over two
-    # minutes of drift by the end of this run.
-    assert len(elapsed) == 12_001
-    assert elapsed[-1] == pytest.approx(600.0, abs=1e-9)
-    assert elapsed == pytest.approx([index * 0.05 for index in range(12_001)], abs=1e-9)
+def test_every_cycle_is_recorded_once():
+    runner, vehicle = build(start=NED(0.0, 0.0, -20.0))
+    sink = MemorySink()
+    report = runner.fly(HoldPoint(target=NED(5.0, 0.0, -20.0)), 3.0, sink=sink)
+    # 3 s at 10 Hz, plus the tick at t = 0; one command per cycle, plus the stop command.
+    assert len(report.samples) == 31
+    assert len(sink.samples) == 31
+    assert len(vehicle.commands) == 32
 
 
-def test_a_body_that_overruns_shows_up_as_lateness():
-    clock = FakeClock()
-    loop = make_loop(clock)
-    for tick in loop.ticks(0.5):
-        if tick.index == 1:
-            clock.advance(0.15)  # one and a half periods
-        else:
-            clock.advance(0.01)
-    assert max(loop.lateness) == pytest.approx(0.05)
+def test_streaming_mode_keeps_nothing_in_memory():
+    runner, _ = build(start=NED(0.0, 0.0, -20.0))
+    runner.retain_samples = False
+    sink = MemorySink()
+    report = runner.fly(HoldPoint(target=NED(5.0, 0.0, -20.0)), 3.0, sink=sink)
+    assert report.samples == []
+    assert len(sink.samples) == 31
+    # The tick count is the row count: a summary and its log have to reconcile.
+    assert report.loop.ticks == 31
 
 
-def test_a_badly_overrunning_body_resynchronises_instead_of_bursting():
-    clock = FakeClock()
-    loop = make_loop(clock)
-    stalled = False
-    ticks = []
-    for tick in loop.ticks(2.0):
-        ticks.append(tick.elapsed_s)
-        if not stalled:
-            stalled = True
-            clock.advance(0.55)  # a stalled link swallows five and a half periods
-        else:
-            clock.advance(0.01)
-    gaps = [b - a for a, b in zip(ticks, ticks[1:])]
-    # One long gap for the stall, and no catch-up burst of zero-length cycles after it.
-    assert max(gaps) == pytest.approx(0.55)
-    assert min(gaps) == pytest.approx(0.1)
+def test_the_run_ends_by_commanding_a_stop():
+    runner, vehicle = build(start=NED(0.0, 0.0, -20.0))
+    runner.fly(HoldPoint(target=NED(50.0, 0.0, -20.0)), 1.0)
+    last_velocity, _ = vehicle.commands[-1]
+    assert last_velocity == NED(0.0, 0.0, 0.0)
 
 
-def test_a_stall_is_counted_because_lateness_cannot_see_it():
-    # Re-basing the schedule moves the deadline the next tick is measured against, so a
-    # stall long enough to trigger a resync reports zero lateness. Without the counters
-    # a run could quote a sub-millisecond worst case having silently dropped cycles.
-    clock = FakeClock()
-    loop = make_loop(clock)
-    stalled = False
-    for _ in loop.ticks(2.0):
-        if not stalled:
-            stalled = True
-            clock.advance(0.55)  # five and a half periods inside one body
-        else:
-            clock.advance(0.01)
-    stats = loop.stats()
-    assert stats.max_lateness_s == pytest.approx(0.0)
-    assert stats.resyncs == 1
-    # A 0.55 s body starting on the tick at t = 0 runs past the deadlines at 0.2, 0.3,
-    # 0.4 and 0.5; the one at 0.1 is not skipped but served late, at 0.55.
-    assert stats.skipped_cycles == 4
-    assert stats.as_dict()["skipped_cycles"] == 4.0
+def test_samples_carry_the_local_frame_and_the_commands():
+    runner, _ = build(start=NED(0.0, 0.0, -20.0))
+    sink = MemorySink()
+    runner.fly(HoldPoint(target=NED(20.0, 0.0, -20.0)), 1.0, sink=sink, label="hold")
+    first = sink.samples[0]
+    assert first.label == "hold"
+    assert first.north_m == pytest.approx(0.0, abs=1e-6)
+    assert first.down_m == pytest.approx(-20.0, abs=1e-6)
+    assert first.cmd_vn > 0.0
+    assert first.error_m == pytest.approx(20.0, abs=1e-6)
+    assert first.mode == "GUIDED"
+    assert first.armed is True
 
 
-def test_an_overrun_too_small_to_resynchronise_is_still_reported_as_lateness():
-    clock = FakeClock()
-    loop = make_loop(clock)
-    for tick in loop.ticks(0.5):
-        clock.advance(0.15 if tick.index == 1 else 0.01)
-    stats = loop.stats()
-    assert stats.resyncs == 0
-    assert stats.max_lateness_s == pytest.approx(0.05)
+def test_the_local_frame_survives_the_round_trip_through_wgs84():
+    runner, _ = build(start=NED(-40.0, 75.0, -20.0))
+    sink = MemorySink()
+    runner.fly(HoldPoint(target=NED(-40.0, 75.0, -20.0)), 1.0, sink=sink)
+    first = sink.samples[0]
+    assert first.north_m == pytest.approx(-40.0, abs=1e-6)
+    assert first.east_m == pytest.approx(75.0, abs=1e-6)
+    assert first.error_m == pytest.approx(0.0, abs=1e-6)
 
 
-def test_a_clean_run_reports_no_resyncs():
-    clock = FakeClock()
-    loop = make_loop(clock)
-    for _ in loop.ticks(1.0):
-        clock.advance(0.02)
-    assert loop.stats().resyncs == 0
-    assert loop.stats().skipped_cycles == 0
+def test_flying_without_an_anchored_frame_is_refused():
+    tracker = TelemetryTracker()
+    vehicle = FakeVehicle(tracker, dt=0.1, start=NED(0.0, 0.0, 0.0))
+    runner, clock = _runner_on_a_fake_clock(vehicle, tracker, hz=10.0)
+    started_at = clock.now
+
+    with pytest.raises(RuntimeError):
+        runner.fly(HoldPoint(target=NED(0.0, 0.0)), 1.0)
+
+    # Refused before the loop was built: no tick was scheduled and nothing was commanded.
+    # The clock has to be the one the runner uses, or this asserts nothing at all.
+    assert clock.now == started_at
+    assert vehicle.commands == []
 
 
-def test_the_loop_sleeps_away_only_the_time_the_body_left_over():
-    clock = FakeClock()
-    loop = make_loop(clock, spin_slack_s=0.0)
-    for _ in loop.ticks(0.3):
-        clock.advance(0.02)
-    assert clock.sleeps == pytest.approx([0.08] * len(clock.sleeps))
-    assert len(clock.sleeps) >= 3
+def test_a_dead_position_stream_stops_the_loop_rather_than_flying_blind():
+    runner, vehicle = build(start=NED(0.0, 0.0, -20.0))
+    law = HoldPoint(target=NED(50.0, 0.0, -20.0))
+
+    # After five cycles the vehicle stops reporting where it is.
+    original = vehicle.send_velocity
+
+    def send_and_maybe_go_quiet(velocity: NED, yaw_deg: float | None = None) -> None:
+        original(velocity, yaw_deg)
+        if len(vehicle.commands) == 5:
+            vehicle.silent = True
+
+    vehicle.send_velocity = send_and_maybe_go_quiet  # type: ignore[method-assign]
+
+    with pytest.raises(StaleTelemetry):
+        runner.fly(law, duration_s=30.0)
+
+    # And it braked on the way out instead of leaving the last command standing.
+    assert vehicle.commands[-1][0] == NED(0.0, 0.0, 0.0)
+    assert len(vehicle.commands) < 30  # nowhere near the 300 cycles it was asked for
 
 
-def test_spin_slack_is_taken_off_the_sleep_and_spun_through():
-    clock = SpinningClock()
-    loop = make_loop(clock, spin_slack_s=0.015)
-    for _ in loop.ticks(0.3):
-        clock.advance(0.02)
-    # 100 ms period, 20 ms body, 15 ms held back to spin through instead of sleeping.
-    assert clock.sleeps[0] == pytest.approx(0.065, abs=0.005)
-    assert max(loop.lateness) < 0.005
-
-
-def test_stats_describe_an_ideal_run():
-    clock = FakeClock()
-    loop = make_loop(clock)
-    for _ in loop.ticks(1.0):
-        clock.advance(0.02)
-    stats = loop.stats()
-    assert stats.ticks == 10
-    assert stats.mean_period_s == pytest.approx(0.1)
-    assert stats.jitter_stdev_s == pytest.approx(0.0)
-    assert stats.as_dict()["mean_hz"] == pytest.approx(10.0)
-
-
-def test_stats_on_an_unstarted_loop_are_empty_rather_than_a_crash():
-    stats = FixedRateLoop(10.0).stats()
-    assert stats.ticks == 0
-    assert stats.as_dict()["mean_hz"] == 0.0
-
-
-def test_sleep_overshoot_is_measured_not_assumed():
-    clock = FakeClock(sleep_overshoot=0.009)
-    overshoot = measure_sleep_overshoot(
-        samples=4, request_s=0.09, monotonic=clock.monotonic, sleep=clock.sleep
-    )
-    assert overshoot == pytest.approx(0.009)
-
-
-def test_calibrated_slack_never_eats_the_whole_period(monkeypatch):
-    monkeypatch.setattr("carrot_guide.runner.measure_sleep_overshoot", lambda **_: 10.0)
-    loop = FixedRateLoop.calibrated(10.0)
-    assert loop.spin_slack_s == pytest.approx(0.1 * FixedRateLoop.MAX_SPIN_SHARE)
+def test_loop_statistics_come_back_with_the_run():
+    runner, _ = build(start=NED(0.0, 0.0, -20.0), hz=20.0)
+    report = runner.fly(HoldPoint(target=NED(5.0, 0.0, -20.0)), 2.0)
+    assert report.loop.target_hz == 20.0
+    assert report.loop.ticks == 41  # 2 s at 20 Hz, plus the tick at t = 0
+    assert report.loop.mean_period_s == pytest.approx(0.05)

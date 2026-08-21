@@ -108,7 +108,7 @@ def measure_sleep_overshoot(
 
 @dataclass
 class FixedRateLoop:
-    """Deadline-driven scheduler: periods accumulate, so the loop does not drift.
+    """Deadline-driven scheduler: deadlines come from the tick index, so it does not drift.
 
     A naive `sleep(period)` loop loses the time the body takes on every iteration and
     ends up running measurably slow; scheduling against absolute deadlines keeps the
@@ -125,6 +125,10 @@ class FixedRateLoop:
     spin_slack_s: float = 0.002
     lateness: list[float] = field(default_factory=list)
     periods: list[float] = field(default_factory=list)
+    # Ticks actually served. Counted rather than taken from `len(periods)`, which holds the
+    # intervals *between* ticks and is one short: reported as a tick count it put 5 999 in the
+    # README for a ten-minute run at 10 Hz, next to the 6 000 rows the same run wrote.
+    served: int = 0
     # How often the schedule had to be abandoned and re-based, and how many cycles that
     # cost. Kept because `lateness` structurally cannot see these events.
     resyncs: int = 0
@@ -180,6 +184,7 @@ class FixedRateLoop:
             if index:
                 self.lateness.append(late)
                 self.periods.append(now - previous)
+            self.served += 1
             yield Tick(index=index, elapsed_s=elapsed, lateness_s=late)
             previous = now
             index += 1
@@ -208,7 +213,7 @@ class FixedRateLoop:
     def stats(self) -> LoopStats:
         return LoopStats(
             target_hz=self.hz,
-            ticks=len(self.periods),
+            ticks=self.served,
             mean_period_s=statistics.fmean(self.periods) if self.periods else 0.0,
             jitter_stdev_s=statistics.pstdev(self.periods) if len(self.periods) > 1 else 0.0,
             max_lateness_s=max(self.lateness, default=0.0),

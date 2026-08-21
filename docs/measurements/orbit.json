@@ -27,7 +27,7 @@
   "radius_m": 25.0,
   "loop": {
     "target_hz": 10.0,
-    "ticks": 899.0,
+    "ticks": 900.0,
     "mean_hz": 10.0,
     "jitter_stdev_ms": 0.319,
     "max_lateness_ms": 0.684,
