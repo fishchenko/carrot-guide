@@ -1,0 +1,49 @@
+{
+  "run": "intercept",
+  "log": "logs/intercept-pronav.csv",
+  "tracking": {
+    "label": "intercept",
+    "duration_s": 44.9,
+    "settle_time_s": null,
+    "hold_start_s": null,
+    "window": "whole run",
+    "measured_samples": 450,
+    "mean_error_m": 29.084,
+    "rms_error_m": 33.126,
+    "max_error_m": 72.111,
+    "p95_error_m": 64.704,
+    "min_error_m": 0.013,
+    "min_error_t_s": 17.4,
+    "reach_time_s": 16.5,
+    "max_speed_mps": 4.08
+  },
+  "conditions": {
+    "SIM_WIND_SPD": 0.0,
+    "SIM_WIND_DIR": 90.0,
+    "SIM_WIND_TURB": 0.0
+  },
+  "law": "pronav",
+  "target_start_ned": [
+    60.0,
+    -40.0,
+    -20.0
+  ],
+  "target_velocity_ned": [
+    0.0,
+    3.0,
+    0.0
+  ],
+  "own_speed_mps": 4.0,
+  "optimal_intercept_s": 15.06,
+  "loop": {
+    "target_hz": 10.0,
+    "ticks": 450.0,
+    "mean_hz": 10.0,
+    "jitter_stdev_ms": 0.163,
+    "max_lateness_ms": 2.44,
+    "p95_lateness_ms": 0.0,
+    "spin_slack_ms": 6.536,
+    "resyncs": 0.0,
+    "skipped_cycles": 0.0
+  }
+}

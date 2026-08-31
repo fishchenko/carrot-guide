@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
+from carrot_guide.metrics import DEFAULT_REACH_THRESHOLD_M, reach_time
 from carrot_guide.recording import Sample
 from carrot_guide.state import NED
 
@@ -19,8 +20,17 @@ def plot_run(
     title: str = "",
     centre: NED | None = None,
     radius_m: float | None = None,
+    target_start: NED | None = None,
+    target_velocity: NED | None = None,
 ) -> Path:
-    """Write a two-panel figure: track on the left, tracking error on the right."""
+    """Write a two-panel figure: track on the left, tracking error on the right.
+
+    `centre` marks something that stays put; `target_start` with `target_velocity` marks
+    something that does not, and the two are drawn differently on purpose. Against a
+    mover the aim point is a line rather than a cross, and where the two tracks come
+    together is the whole result — a lead course meets it, a tail chase arrives behind
+    it and turns for the rest of the run.
+    """
     try:
         import matplotlib
 
@@ -47,6 +57,33 @@ def plot_run(
                 (centre.east, centre.north), radius_m, fill=False, linestyle="--", color="black"
             )
             track.add_patch(circle)
+
+    if target_start is not None:
+        # Recomputed from the run's own parameters rather than logged per sample: the
+        # target is a pure function of time, so this cannot drift from what the law was
+        # actually aiming at, and the log stays the vehicle's story alone.
+        velocity = target_velocity if target_velocity is not None else NED(0.0, 0.0, 0.0)
+        times = [s.t_s for s in samples]
+        target_east = [target_start.east + velocity.east * t for t in times]
+        target_north = [target_start.north + velocity.north * t for t in times]
+        track.plot(target_east, target_north, "--", linewidth=1.2, color="black", label="target")
+        track.plot(target_east[0], target_north[0], "x", color="black")
+
+        # Where it got there, by `reach_time` rather than the deepest approach: a law
+        # that stays alongside its target goes on making new minima, and marking the
+        # lowest of them puts the star minutes away from the pass it is meant to show.
+        reached = reach_time(samples, DEFAULT_REACH_THRESHOLD_M)
+        if reached is not None:
+            at = min(range(len(samples)), key=lambda i: abs(samples[i].t_s - reached))
+            track.plot(
+                target_east[at],
+                target_north[at],
+                "*",
+                color="tab:orange",
+                markersize=13,
+                label=f"reached, {reached:.1f} s",
+            )
+            error.axvline(reached, color="tab:orange", linestyle=":", linewidth=1.2)
 
     track.set_xlabel("east, m")
     track.set_ylabel("north, m")

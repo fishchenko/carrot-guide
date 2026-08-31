@@ -43,6 +43,11 @@ DEFAULT_HOLD_LEAD_IN_S = 8.0
 # because the CLI offers it on two subcommands and all three used to spell it `2.0`.
 DEFAULT_SETTLE_THRESHOLD_M = 2.0
 
+# How close counts as having reached a moving target. Far below the tens of metres an
+# engagement opens at, and far above the 0.4 m one 10 Hz tick covers at closing speed,
+# so the answer does not depend on which tick happened to be sampled.
+DEFAULT_REACH_THRESHOLD_M = 3.0
+
 # Which part of the run the error statistics describe. A run that is too short to have a
 # settled stretch, or that never settles at all, still gets a summary — but it says so,
 # rather than reporting a different quantity under the same field names.
@@ -65,6 +70,20 @@ class RunSummary:
     rms_error_m: float
     max_error_m: float
     p95_error_m: float
+    # The closest the vehicle ever came to what it was aiming at, and when. A footnote
+    # on a station-keeping run; on an intercept the minimum of the range *is* the miss
+    # distance. Here on the one summary rather than in a second one beside it, so that
+    # `carrot-guide report` hands the number back from a recorded log without having to
+    # be told which experiment wrote it.
+    #
+    # `min_error_t_s` is not the time to intercept, however tempting it looks: it is the
+    # time of the *deepest* approach, and a law that stays with its target after the
+    # pass keeps making new ones. A pursuit run that had been within 3 m since 24.3 s
+    # reported 43.6 s this way, purely because a later wobble dipped a millimetre lower.
+    # `reach_time_s` is the honest answer and the two differ by design.
+    min_error_m: float
+    min_error_t_s: float
+    reach_time_s: float | None
     max_speed_mps: float
 
     def as_dict(self) -> dict[str, float | str | None]:
@@ -79,6 +98,9 @@ class RunSummary:
             "rms_error_m": round(self.rms_error_m, 3),
             "max_error_m": round(self.max_error_m, 3),
             "p95_error_m": round(self.p95_error_m, 3),
+            "min_error_m": round(self.min_error_m, 3),
+            "min_error_t_s": round(self.min_error_t_s, 2),
+            "reach_time_s": None if self.reach_time_s is None else round(self.reach_time_s, 2),
             "max_speed_mps": round(self.max_speed_mps, 2),
         }
 
@@ -101,6 +123,20 @@ def settle_time(samples: Sequence[Sample], threshold_m: float) -> float | None:
     return samples[last_violation + 1].t_s
 
 
+def reach_time(samples: Sequence[Sample], threshold_m: float) -> float | None:
+    """First time the error drops under `threshold_m` — i.e. when the vehicle got there.
+
+    The mirror of `settle_time`, and scanning the other way for the same reason. A hold
+    is about staying, so settling looks for the last violation; an intercept is about
+    arriving, and nothing the vehicle does after the pass makes the pass itself earlier
+    or later. None when it never got that close.
+    """
+    for sample in samples:
+        if sample.error_m < threshold_m:
+            return sample.t_s
+    return None
+
+
 def hold_start(
     samples: Sequence[Sample],
     threshold_m: float,
@@ -118,6 +154,7 @@ def summarise(
     samples: Sequence[Sample],
     label: str = "",
     settle_threshold_m: float = DEFAULT_SETTLE_THRESHOLD_M,
+    reach_threshold_m: float = DEFAULT_REACH_THRESHOLD_M,
     hold_lead_in_s: float = DEFAULT_HOLD_LEAD_IN_S,
 ) -> RunSummary:
     if not samples:
@@ -138,6 +175,10 @@ def summarise(
         window, measured = WINDOW_WHOLE_RUN, list(samples)
 
     errors = [s.error_m for s in measured]
+    # Taken from `measured` like the rest, so `window` describes it too: on an intercept
+    # that window is the whole run, which is what makes the minimum a miss distance
+    # rather than the smallest range inside some stretch chosen after the fact.
+    closest = min(measured, key=lambda s: s.error_m)
     # Deliberately the whole run, not `measured`: the fastest the vehicle ever went is a
     # property of the approach and of the speed limit, and it is the approach the window
     # exists to exclude. It is the one field here the `window` does not describe.
@@ -154,6 +195,9 @@ def summarise(
         rms_error_m=math.sqrt(statistics.fmean(e * e for e in errors)),
         max_error_m=max(errors),
         p95_error_m=percentile(errors, 0.95),
+        min_error_m=closest.error_m,
+        min_error_t_s=closest.t_s,
+        reach_time_s=reach_time(samples, reach_threshold_m),
         max_speed_mps=max(speeds, default=0.0),
     )
 

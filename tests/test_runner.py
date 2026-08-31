@@ -8,7 +8,7 @@ loudly if the runner ever feeds a law the wrong frame.
 
 import pytest
 
-from carrot_guide.guidance import HoldPoint, Limits
+from carrot_guide.guidance import HoldPoint, Limits, Pursuit, Target
 from carrot_guide.recording import MemorySink
 from carrot_guide.runner import FixedRateLoop, GuidanceRunner, StaleTelemetry
 from carrot_guide.state import NED, GlobalPosition, from_local_ned
@@ -180,3 +180,17 @@ def test_loop_statistics_come_back_with_the_run():
     assert report.loop.target_hz == 20.0
     assert report.loop.ticks == 41  # 2 s at 20 Hz, plus the tick at t = 0
     assert report.loop.mean_period_s == pytest.approx(0.05)
+
+
+def test_a_law_aimed_at_a_moving_target_is_handed_the_run_clock():
+    """The loop owns the only clock, so a moving target is wrong without this wiring."""
+    runner, _ = build(start=NED(0.0, 0.0, -20.0))
+    target = Target(start=NED(40.0, 0.0, -20.0), velocity=NED(0.0, 4.0))
+    sink = MemorySink()
+    runner.fly(Pursuit(target=target, speed_mps=5.0), duration_s=2.0, sink=sink)
+
+    # The target is due north at t = 0, so nothing of the first command points east.
+    assert sink.samples[0].cmd_ve == pytest.approx(0.0, abs=1e-9)
+    # Two seconds on it is 8 m east of where it started and the vehicle is going after
+    # it. A law handed t = 0 on every tick would still be flying due north.
+    assert sink.samples[-1].cmd_ve > 1.0

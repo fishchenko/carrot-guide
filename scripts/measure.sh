@@ -13,9 +13,12 @@ BIN=$CARROT_GUIDE_VENV/bin
 URL=${SITL_URL:-tcp:127.0.0.1:5760}
 OUT=${OUT:-docs/measurements}
 
-# The lookahead that cancels the vehicle's turn lag on the orbit: set from the
-# measured command-to-reaction latency, not guessed.
-LOOKAHEAD=${LOOKAHEAD:-0.22}
+# The measured command-to-reaction latency of this link, in seconds: the orbit aims its
+# tangent this far ahead to cancel the vehicle's turn lag. Measured by `latency` below,
+# not guessed — if the vehicle or the link changes, re-measure and put the answer here.
+# Proportional navigation once took its lead time from this same number and no longer
+# does; that one is swept rather than measured, and lives in `guidance.DEFAULT_RESPONSE_S`.
+LATENCY=${LATENCY:-0.22}
 
 mkdir -p "$OUT" logs docs
 
@@ -48,9 +51,19 @@ run "orbit, 90 s, 25 m, gusty wind, tangent aimed at the present position" orbit
     --radius 25 --speed 4 --altitude 20 --wind 6 --turbulence 1 --seconds 90 \
     --log logs/orbit-nolookahead.csv --summary "$OUT/orbit-nolookahead.json"
 
-run "orbit, 90 s, 25 m, gusty wind, ${LOOKAHEAD} s lookahead" orbit --url "$URL" \
+run "orbit, 90 s, 25 m, gusty wind, ${LATENCY} s lookahead" orbit --url "$URL" \
     --radius 25 --speed 4 --altitude 20 --wind 6 --turbulence 1 --seconds 90 \
-    --lookahead "$LOOKAHEAD" --log logs/orbit.csv --summary "$OUT/orbit.json"
+    --lookahead "$LATENCY" --log logs/orbit.csv --summary "$OUT/orbit.json"
+
+# The intercept pair. Identical geometry, identical speed, and the summaries carry the
+# collision-triangle time the two measured times are read against, so the comparison is
+# between the two laws and nothing else.
+for law in pursuit pronav; do
+    run "intercept, 45 s, crossing target, ${law}" intercept --url "$URL" \
+        --law "$law" --north 60 --east -40 --target-speed 3 --target-heading 90 \
+        --speed 4 --altitude 20 --seconds 45 \
+        --log "logs/intercept-${law}.csv" --summary "$OUT/intercept-${law}.json"
+done
 
 run "command latency, 6 trials" latency --url "$URL" --trials 6 \
     --summary "$OUT/latency.json"

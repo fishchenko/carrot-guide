@@ -12,7 +12,7 @@ SITL_URL ?= tcp:127.0.0.1:5760
 SITL_HOST ?= 127.0.0.1
 SITL_PORT ?= 5760
 
-.PHONY: venv test smoke check test-sitl sitl-up sitl-down hold orbit latency profile plots measure clean
+.PHONY: venv test smoke check test-sitl sitl-up sitl-down hold orbit intercept latency profile plots measure clean
 
 venv:
 	$(PYTHON) -m venv $(VENV)
@@ -61,6 +61,13 @@ hold:
 orbit:
 	$(BIN)/carrot-guide orbit --url $(SITL_URL) --radius 25 --speed 4 --altitude 20 \
 		--wind 6 --turbulence 1 --lookahead 0.22 --seconds 90
+
+# The crossing target both intercept laws are compared on: it starts 72 m out on the
+# bow and runs east at 3 m/s against the vehicle's 4. Swap --law for the other one.
+intercept:
+	$(BIN)/carrot-guide intercept --url $(SITL_URL) --law pronav \
+		--north 60 --east -40 --target-speed 3 --target-heading 90 \
+		--speed 4 --altitude 20 --seconds 45
 
 latency:
 	$(BIN)/carrot-guide latency --url $(SITL_URL) --trials 6

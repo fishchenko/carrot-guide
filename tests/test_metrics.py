@@ -7,6 +7,7 @@ from carrot_guide.metrics import (
     WINDOW_POST_SETTLE,
     WINDOW_WHOLE_RUN,
     hold_start,
+    reach_time,
     settle_time,
     summarise,
     summarise_latency,
@@ -142,3 +143,50 @@ def test_latency_summary():
 def test_latency_summary_needs_at_least_one_trial():
     with pytest.raises(ValueError):
         summarise_latency([])
+
+
+def test_the_summary_reports_the_closest_the_vehicle_ever_came_and_when():
+    samples = [sample(0.0, 20.0), sample(1.0, 3.0), sample(2.0, 0.4), sample(3.0, 7.0)]
+    summary = summarise(samples, settle_threshold_m=0.0)
+    assert summary.min_error_m == pytest.approx(0.4)
+    assert summary.min_error_t_s == pytest.approx(2.0)
+
+
+def test_reach_time_is_the_first_approach_not_the_deepest_one():
+    """The distinction that `min_error_t_s` cannot make on a law that stays alongside.
+
+    Both dips are inside the threshold and the later one is deeper, so the closest
+    approach lands at 9 s while the vehicle has plainly been there since 2 s.
+    """
+    samples = [sample(0.0, 20.0), sample(2.0, 1.0), sample(5.0, 2.5), sample(9.0, 0.2)]
+    summary = summarise(samples, settle_threshold_m=0.0, reach_threshold_m=3.0)
+    assert summary.reach_time_s == pytest.approx(2.0)
+    assert summary.min_error_t_s == pytest.approx(9.0)
+
+
+def test_a_target_never_reached_has_no_reach_time():
+    samples = [sample(float(index), 40.0) for index in range(5)]
+    assert reach_time(samples, threshold_m=3.0) is None
+    assert summarise(samples, settle_threshold_m=0.0).reach_time_s is None
+
+
+def test_a_threshold_of_zero_leaves_the_whole_run_as_the_window():
+    """How an intercept is summarised: a pass has no hold, so there is nothing to find.
+
+    Without this the last sample under the threshold would open a `hold` window over
+    the far side of the pass, and the run would average its own retreat.
+    """
+    samples = [sample(0.0, 20.0), sample(1.0, 3.0), sample(2.0, 0.4), sample(3.0, 7.0)]
+    summary = summarise(samples, settle_threshold_m=0.0)
+    assert summary.window == WINDOW_WHOLE_RUN
+    assert summary.settle_time_s is None
+    assert summary.measured_samples == 4
+
+
+def test_the_closest_approach_is_taken_over_the_named_window_like_everything_else():
+    """`window` has to describe every error field, or one of them means something else."""
+    samples = approach_then_hold(hold_error=0.4)
+    summary = summarise(samples)
+    assert summary.window == WINDOW_HOLD
+    measured = [s for s in samples if s.t_s >= summary.hold_start_s]
+    assert summary.min_error_m == pytest.approx(min(s.error_m for s in measured))

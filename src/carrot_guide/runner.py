@@ -20,11 +20,18 @@ from carrot_guide.utils import percentile
 
 
 class GuidanceLaw(Protocol):
-    """What the runner needs from a law; see `guidance` for the implementations."""
+    """What the runner needs from a law; see `guidance` for the implementations.
 
-    def command(self, position: NED, velocity: NED) -> VelocityCommand: ...
+    `t_s` is the seconds since the run began, and it is here rather than on the laws
+    that happen to want it because a law aimed at something that moves cannot say where
+    the target is without a clock, and the loop is the only thing that owns one. The
+    laws whose target is a fixed point ignore it; see `guidance` for why they default it
+    and the intercept laws do not.
+    """
 
-    def tracking_error(self, position: NED) -> float: ...
+    def command(self, position: NED, velocity: NED, t_s: float) -> VelocityCommand: ...
+
+    def tracking_error(self, position: NED, t_s: float) -> float: ...
 
 
 class VehicleLink(Protocol):
@@ -286,7 +293,7 @@ class GuidanceRunner:
 
             state: VehicleState = self.tracker.snapshot()
             position = to_local_ned(state.position, origin)
-            command = law.command(position, state.velocity)
+            command = law.command(position, state.velocity, tick.elapsed_s)
             self.link.send_velocity(command.velocity, command.yaw_deg)
 
             sample = Sample(
@@ -303,7 +310,7 @@ class GuidanceRunner:
                 cmd_vn=command.velocity.north,
                 cmd_ve=command.velocity.east,
                 cmd_vd=command.velocity.down,
-                error_m=law.tracking_error(position),
+                error_m=law.tracking_error(position, tick.elapsed_s),
                 lateness_ms=tick.lateness_s * 1000.0,
                 mode=state.mode,
                 armed=state.armed,

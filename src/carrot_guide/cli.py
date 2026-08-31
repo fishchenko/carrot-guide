@@ -1,4 +1,4 @@
-"""Command line: every experiment in the spec, one subcommand each.
+"""Command line: one subcommand per experiment — every one in the spec, and `intercept`.
 
 Each flying command writes a CSV log and prints a JSON summary, so a run is
 reproducible and its numbers can go straight into the README without retyping.
@@ -7,11 +7,21 @@ reproducible and its numbers can go straight into the README without retyping.
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import astuple
 from pathlib import Path
 from typing import Any, Sequence
 
-from carrot_guide.guidance import Gains, HoldPoint, Limits, Orbit
+from carrot_guide.guidance import (
+    DEFAULT_RESPONSE_S,
+    Gains,
+    HoldPoint,
+    Limits,
+    Orbit,
+    ProNav,
+    Pursuit,
+    Target,
+)
 from carrot_guide.link import DEFAULT_SIMULATOR_URL, MavlinkLink
 from carrot_guide.metrics import DEFAULT_SETTLE_THRESHOLD_M, summarise, summarise_latency
 from carrot_guide.mission import Vehicle, airborne, measure_command_latency
@@ -82,12 +92,18 @@ class FlightCommand(VehicleCommand):
     that is identical.
     """
 
+    # What counts as having arrived. On the station-keeping experiments it is what
+    # opens the hold window the error statistics are taken over; `InterceptCommand`
+    # sets it to zero, because a pass has no hold to find. A class attribute rather
+    # than an override of `add_arguments`, so a subclass changes the default without
+    # having to restate the option and its help.
+    settle_threshold_default = DEFAULT_SETTLE_THRESHOLD_M
+
     def add_arguments(self, sub: argparse.ArgumentParser) -> None:
         self._add_link(sub)
         sub.add_argument("--altitude", type=float, default=20.0, help="takeoff altitude, m")
         sub.add_argument("--rate", type=float, default=10.0, help="control loop rate, Hz")
         sub.add_argument("--max-speed", type=float, default=5.0, help="horizontal speed cap, m/s")
-        sub.add_argument("--kp", type=float, default=0.8)
         sub.add_argument("--wind", type=float, default=0.0, help="simulated wind speed, m/s")
         sub.add_argument("--wind-dir", type=float, default=90.0, help="wind direction, deg")
         sub.add_argument(
@@ -96,7 +112,13 @@ class FlightCommand(VehicleCommand):
             default=0.0,
             help="simulated wind turbulence (SIM_WIND_TURB); 0 is steady wind",
         )
-        sub.add_argument("--settle-threshold", type=float, default=DEFAULT_SETTLE_THRESHOLD_M)
+        sub.add_argument(
+            "--settle-threshold",
+            type=float,
+            default=self.settle_threshold_default,
+            help="error under which the vehicle counts as arrived; zero leaves the whole "
+            "run as the window the statistics are taken over",
+        )
         sub.add_argument("--log", default=None, help="where to write the CSV log")
         self._add_summary(sub)
         sub.add_argument(
@@ -199,6 +221,7 @@ class HoldCommand(FlightCommand):
 
     def add_law_arguments(self, sub: argparse.ArgumentParser) -> None:
         # Only the hold law has a derivative term; see OrbitCommand.build_law.
+        sub.add_argument("--kp", type=float, default=0.8)
         sub.add_argument("--kd", type=float, default=0.4)
         sub.add_argument("--north", type=float, default=30.0, help="target offset north, m")
         sub.add_argument("--east", type=float, default=0.0, help="target offset east, m")
@@ -220,6 +243,7 @@ class OrbitCommand(FlightCommand):
     """F4: fly a circle around the takeoff point."""
 
     def add_law_arguments(self, sub: argparse.ArgumentParser) -> None:
+        sub.add_argument("--kp", type=float, default=0.8, help="gain of the radial term")
         sub.add_argument("--north", type=float, default=0.0, help="circle centre north, m")
         sub.add_argument("--east", type=float, default=0.0, help="circle centre east, m")
         sub.add_argument("--radius", type=float, default=25.0)
@@ -249,6 +273,89 @@ class OrbitCommand(FlightCommand):
 
     def describe(self, args: argparse.Namespace) -> dict[str, Any]:
         return {"centre_ned": list(astuple(self._point(args))), "radius_m": args.radius}
+
+
+class InterceptCommand(FlightCommand):
+    """Fly at a moving target, by pure pursuit or by proportional navigation.
+
+    Beyond the spec, which asks only for laws aimed at a point that stays put. What
+    those cannot say is what happens when it does not, and the answer is the one number
+    this run reports: `min_error_m`, the closest the vehicle ever came.
+
+    Both laws fly at the same speed and differ only in the direction they pick, so the
+    comparison between them is a comparison of the direction and of nothing else.
+    """
+
+    # A pass has no hold: the range falls, goes through its minimum and grows again. A
+    # non-zero threshold would open a "hold" window on the far side of the pass and
+    # average the retreat, so there is none and every summary here says `whole run`.
+    settle_threshold_default = 0.0
+
+    def add_law_arguments(self, sub: argparse.ArgumentParser) -> None:
+        sub.add_argument(
+            "--law", choices=("pursuit", "pronav"), default="pronav", help="which law to fly"
+        )
+        sub.add_argument("--north", type=float, default=60.0, help="target start north, m")
+        sub.add_argument("--east", type=float, default=-40.0, help="target start east, m")
+        sub.add_argument("--speed", type=float, default=4.0, help="own speed, m/s")
+        sub.add_argument("--target-speed", type=float, default=3.0, help="target speed, m/s")
+        sub.add_argument(
+            "--target-heading",
+            type=float,
+            default=90.0,
+            help="target course, deg clockwise from north",
+        )
+        # No --kp: neither law has a horizontal gain to set. Both fly at a fixed speed,
+        # and the only proportional term left is the one holding altitude, which is not
+        # what the experiment is about.
+        sub.add_argument(
+            "--nav-constant", type=float, default=3.0, help="N, the navigation constant"
+        )
+        sub.add_argument(
+            "--response",
+            type=float,
+            default=DEFAULT_RESPONSE_S,
+            help="lead time the turn rate is asked for as, s",
+        )
+        sub.add_argument("--seconds", type=float, default=45.0)
+
+    @staticmethod
+    def _target(args: argparse.Namespace) -> Target:
+        """The target's track, from where it starts and the course it holds."""
+        heading = math.radians(args.target_heading)
+        return Target(
+            start=FlightCommand._point(args),
+            velocity=NED(
+                args.target_speed * math.cos(heading), args.target_speed * math.sin(heading)
+            ),
+        )
+
+    def build_law(self, args: argparse.Namespace) -> GuidanceLaw:
+        target = self._target(args)
+        if args.law == "pursuit":
+            return Pursuit(target=target, speed_mps=args.speed, limits=self._limits(args))
+        return ProNav(
+            target=target,
+            speed_mps=args.speed,
+            n=args.nav_constant,
+            response_s=args.response,
+            limits=self._limits(args),
+        )
+
+    def describe(self, args: argparse.Namespace) -> dict[str, Any]:
+        target = self._target(args)
+        # Measured from the takeoff point, which is where the run begins and where the
+        # local frame is anchored. It is the yardstick `min_error_t_s` is read against:
+        # on its own a time to intercept says nothing, and against the best a
+        # constant-speed law could have done it says how much the law left on the table.
+        optimum = target.intercept_time(NED(0.0, 0.0, -args.altitude), args.speed)
+        return {
+            "law": args.law,
+            "target_start_ned": list(astuple(target.start)),
+            "target_velocity_ned": [round(part, 4) for part in astuple(target.velocity)],
+            "own_speed_mps": args.speed,
+            "optimal_intercept_s": None if optimum is None else round(optimum, 2),
+        }
 
 
 class LatencyCommand(VehicleCommand):
@@ -284,6 +391,11 @@ class ReportCommand(Command):
             default=None,
             help="overlay the target as north,east or north,east,radius",
         )
+        sub.add_argument(
+            "--target",
+            default=None,
+            help="overlay a moving target as north,east,vn,ve",
+        )
         sub.add_argument("--settle-threshold", type=float, default=DEFAULT_SETTLE_THRESHOLD_M)
         self._add_summary(sub)
 
@@ -295,8 +407,17 @@ class ReportCommand(Command):
             from carrot_guide.plots import plot_run
 
             centre, radius = self._parse_circle(args.circle)
+            start, velocity = self._parse_target(args.target)
             payload["plot"] = str(
-                plot_run(samples, args.plot, title=summary.label, centre=centre, radius_m=radius)
+                plot_run(
+                    samples,
+                    args.plot,
+                    title=summary.label,
+                    centre=centre,
+                    radius_m=radius,
+                    target_start=start,
+                    target_velocity=velocity,
+                )
             )
         emit_json(payload, args.summary)
         return 0
@@ -313,11 +434,27 @@ class ReportCommand(Command):
             return NED(parts[0], parts[1]), parts[2]
         raise SystemExit("--circle takes north,east or north,east,radius")
 
+    @staticmethod
+    def _parse_target(text: str | None) -> tuple[NED | None, NED | None]:
+        """Parse `north,east,vn,ve`: where the target began and how it was moving.
+
+        Velocity is not optional, unlike the radius on `--circle`. A target given
+        without one is a point hold with extra steps, and drawing it as a mover would
+        put a straight line through the figure that nothing was ever aiming at.
+        """
+        if not text:
+            return None, None
+        parts = [float(part) for part in text.split(",")]
+        if len(parts) != 4:
+            raise SystemExit("--target takes north,east,vn,ve")
+        return NED(parts[0], parts[1]), NED(parts[2], parts[3])
+
 
 COMMANDS: tuple[Command, ...] = (
     TelemetryCommand("telemetry", "print live telemetry"),
     HoldCommand("hold", "fly to a point and hold it"),
     OrbitCommand("orbit", "fly a circle"),
+    InterceptCommand("intercept", "fly at a moving target"),
     LatencyCommand("latency", "measure command-to-reaction latency"),
     ReportCommand("report", "summarise and plot a recorded log"),
 )
