@@ -46,10 +46,16 @@ class CommandFailed(LinkError):
 
 @dataclass
 class MavlinkLink:
-    """Blocking: each command is confirmed by its COMMAND_ACK or by the state change it causes."""
+    """Blocking: each command is confirmed by its COMMAND_ACK or by the state change it causes.
+
+    Clock and sleep are parameters, like `FixedRateLoop`'s: every wait here is a retry loop,
+    and a test of one should not cost the wall-clock time it allows in flight.
+    """
 
     connection: Any
     ack_timeout_s: float = 5.0
+    monotonic: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], None] = time.sleep
 
     @classmethod
     def connect(cls, url: str = DEFAULT_SIMULATOR_URL, timeout_s: float = 60.0) -> "MavlinkLink":
@@ -78,14 +84,14 @@ class MavlinkLink:
 
     def drain(self, tracker: TelemetryTracker, budget_s: float = 0.0) -> int:
         """Feed queued messages to `tracker` and return the count; `budget_s=0` never blocks."""
-        deadline = Deadline.after(budget_s)
+        deadline = Deadline.after(budget_s, self.monotonic)
         count = 0
         while True:
             message = self.connection.recv_match(blocking=False)
             if message is None:
                 if deadline.expired:
                     return count
-                time.sleep(0.001)
+                self.sleep(0.001)
                 continue
             tracker.handle(message)
             count += 1
@@ -97,7 +103,7 @@ class MavlinkLink:
         tracker: TelemetryTracker | None = None,
     ) -> Any | None:
         """`recv_match(type=...)` drops non-matching messages, including a refusal's STATUSTEXT."""
-        deadline = Deadline.after(timeout_s)
+        deadline = Deadline.after(timeout_s, self.monotonic)
         while not deadline.expired:
             message = self.connection.recv_match(
                 blocking=True, timeout=deadline.slice(MAX_BLOCKING_READ_S)
@@ -117,7 +123,7 @@ class MavlinkLink:
         timeout_s: float,
         description: str,
     ) -> None:
-        deadline = Deadline.after(timeout_s)
+        deadline = Deadline.after(timeout_s, self.monotonic)
         while not deadline.expired:
             self.drain(tracker, budget_s=0.05)
             if predicate(tracker):
@@ -138,7 +144,7 @@ class MavlinkLink:
             self._expect_ack(command, tracker)
 
     def _expect_ack(self, command: int, tracker: TelemetryTracker | None = None) -> None:
-        deadline = Deadline.after(self.ack_timeout_s)
+        deadline = Deadline.after(self.ack_timeout_s, self.monotonic)
         while not deadline.expired:
             ack = self._recv_matching("COMMAND_ACK", deadline.slice(MAX_BLOCKING_READ_S), tracker)
             if ack is None or ack.command != command:
@@ -166,7 +172,7 @@ class MavlinkLink:
         retry_every_s: float = 2.0,
     ) -> None:
         """A cold autopilot refuses arm and takeoff transiently, with no reason given."""
-        deadline = Deadline.after(timeout_s)
+        deadline = Deadline.after(timeout_s, self.monotonic)
         refusals = 0
         while not deadline.expired:
             try:
@@ -190,7 +196,7 @@ class MavlinkLink:
         self.drain(tracker)
         if tracker.armed:
             return
-        deadline = Deadline.after(timeout_s)
+        deadline = Deadline.after(timeout_s, self.monotonic)
         self._send_until_accepted(
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             1,
@@ -264,7 +270,7 @@ class MavlinkLink:
             float(value),
             mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
         )
-        deadline = Deadline.after(timeout_s)
+        deadline = Deadline.after(timeout_s, self.monotonic)
         while not deadline.expired:
             message = self._recv_matching(
                 "PARAM_VALUE", deadline.slice(MAX_BLOCKING_READ_S), tracker

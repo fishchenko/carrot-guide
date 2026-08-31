@@ -24,8 +24,16 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Import from the source tree directly, so the unit tests run in a bare checkout
-# without an install step.
+# without an install step. `tests` is a package, because mirroring the source gives
+# `guidance/unit/test_hold.py` and `guidance/integration/test_hold.py` the same
+# basename and only a package makes those two different modules.
 pythonpath = ["src"]
+# Every test file declares its kind in `pytestmark`; --strict-markers is what turns a
+# typo there into an error instead of a test that belongs to no kind.
+addopts = ["--strict-markers"]
 markers = [
-    "sitl: integration test that needs a running ArduPilot SITL instance",
+    "unit: one module or package, in isolation",
+    "component: several modules wired together in process, still no simulator",
+    "smoke: goes through the installed console script rather than the source tree",
+    "integration: needs a running ArduPilot SITL instance",
 ]

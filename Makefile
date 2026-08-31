@@ -20,17 +20,17 @@ venv:
 	$(BIN)/pip install -q -e '.[plots,dev]'
 
 test:
-	$(BIN)/pytest -q -m 'not sitl'
+	$(BIN)/pytest -q -m 'unit or component'
 
 # The unit tests import from src/ directly (pythonpath in pyproject.toml), so they stay
 # green even when the installed console script is broken — which is exactly what a stale
-# editable install looks like after the checkout is moved. One line closes that gap.
+# editable install looks like after the checkout is moved. The smoke tests close that gap.
 smoke:
-	$(BIN)/carrot-guide --help >/dev/null
+	$(BIN)/pytest -q -m smoke
 
 # Needs the simulator up: make sitl-up
 test-sitl:
-	CARROT_SITL_URL=$(SITL_URL) $(BIN)/pytest -q -m sitl
+	CARROT_SITL_URL=$(SITL_URL) $(BIN)/pytest -q -m integration
 
 # The whole suite in one step. The port answers before the autopilot is ready to fly,
 # but that part the tests wait out themselves; what they cannot survive is connecting

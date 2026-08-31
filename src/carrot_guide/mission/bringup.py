@@ -17,8 +17,10 @@ def launch(
     timeout_s: float = 120.0,
 ) -> None:
     """A retry loop, not a sequence: GUIDED drops back to STABILIZE until the estimator is
-    happy, pre-arm refuses for the first half-minute, and an armed vehicle self-disarms in ~10 s."""
-    deadline = Deadline.after(timeout_s)
+    happy, pre-arm refuses for the first half-minute, and an armed vehicle self-disarms in ~10 s.
+
+    Times itself off `link.monotonic`, so a fake clock in the link fakes the whole sequence."""
+    deadline = Deadline.after(timeout_s, link.monotonic)
     last_error: Exception | None = None
 
     while not deadline.expired:

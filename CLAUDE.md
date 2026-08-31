@@ -13,8 +13,8 @@ MAVLink at a 10 Hz control loop. Simulator only — no hardware. `SPEC.md` is th
 ```bash
 cp .env.example .env          # required: set CARROT_GUIDE_VENV to an absolute path
 make venv                     # virtualenv + editable install with [plots,dev]
-make test                     # 158 unit tests, no simulator, ~1.6 s
-make smoke                    # the installed console script actually imports
+make test                     # 158 unit + 12 component, no simulator, ~0.7 s
+make smoke                    # the installed console script actually runs
 make sitl-up                  # build & run ArduCopter SITL in Docker (first build ~15 min)
 make test-sitl                # 6 integration tests against a running SITL (~3 min cold)
 make check                    # test, smoke, sitl-up, wait for port 5760, test-sitl
@@ -27,12 +27,16 @@ make sitl-down                # stop the simulator
 ```
 
 `make test` passes with a broken install, because `pythonpath = ["src"]` in
-`pyproject.toml` lets pytest import from the source tree — that is what `make smoke`
-exists to catch.
+`pyproject.toml` lets pytest import from the source tree — that is what the smoke tests
+exist to catch.
 
-Single test: `$CARROT_GUIDE_VENV/bin/pytest tests/test_guidance.py::test_name -q`. SITL tests
-are marked `sitl` and skip unless `CARROT_SITL_URL` is set (`make test-sitl` sets it). `pytest`
-needs no install step — `pythonpath = ["src"]` is in `pyproject.toml`.
+Single test:
+`$CARROT_GUIDE_VENV/bin/pytest tests/carrot_guide/guidance/unit/test_hold.py::test_name -q`.
+A whole kind is selected by marker — `-m unit`, `-m component`, `-m smoke`,
+`-m integration` — which is what the three targets above do (`make test` takes the first
+two). The integration tests skip unless `CARROT_SITL_URL` is set (`make test-sitl` sets it).
+`pytest` needs no install step for the fast tests —
+`pythonpath = ["src"]` is in `pyproject.toml`.
 
 Flying commands go through the `carrot-guide` CLI (`carrot_guide.cli`): `telemetry`, `hold`,
 `orbit`, `latency`, `report`. Each flying subcommand writes a CSV to `logs/` and prints a JSON
@@ -80,8 +84,8 @@ unreachable by path. That is why the files are `mission/bringup.py` and `utils/p
   the one module allowed near a socket.
 - `runner/` — `scheduler` (`FixedRateLoop` + `measure_sleep_overshoot`; reaches only for its own
   `stats` and `utils.percentile`), `flight` (`GuidanceRunner`), `protocols` (`GuidanceLaw`,
-  `VehicleLink`), `stats` (`Tick`, `LoopStats`). The split follows the seam `tests/` already drew
-  between `test_scheduler.py` and `test_runner.py`.
+  `VehicleLink`), `stats` (`Tick`, `LoopStats`). The split follows the seam `tests/` already
+  drew between the scheduling tests and the runner ones.
 - `mission/` — `vehicle` (the `(link, tracker)` pair), `bringup` (`launch()`, `airborne()`),
   `reaction` (latency measurement — the only half that needs a guidance law).
 - `utils/` — everything general, one admitted thing per file so `ls` shows what passed the test:
@@ -97,9 +101,12 @@ unreachable by path. That is why the files are `mission/bringup.py` and `utils/p
 
 ### Invariants worth not breaking
 
-- **Clock and sleep are injected.** `FixedRateLoop(monotonic=…, sleep=…)` and
-  `GuidanceRunner(loop_factory=…)` exist so ten minutes of loop scheduling is a millisecond-long
-  test with a fake clock. Keep new timing code parameterised the same way.
+- **Clock and sleep are injected.** `FixedRateLoop(monotonic=…, sleep=…)`,
+  `GuidanceRunner(loop_factory=…)` and `MavlinkLink(monotonic=…, sleep=…)` exist so ten minutes
+  of loop scheduling, or a retry loop that allows ninety seconds, is a millisecond-long test
+  with a fake clock. `launch()` times itself off `link.monotonic` for the same reason. Keep new
+  timing code parameterised the same way, and note that a fake connection has to advance the
+  clock on a blocking read that finds nothing, or every wait built on it loops forever.
 - **Deadlines are `origin + index * period`**, never accumulated by addition — float drift lost
   ticks on long runs, and a test asserts every tick lands on its multiple.
 - **Spin slack is measured, not assumed.** `FixedRateLoop.calibrated()` calls
@@ -135,6 +142,47 @@ unreachable by path. That is why the files are `mission/bringup.py` and `utils/p
   `make latency` rather than fitting it.
 - The local frame is anchored at the takeoff point but at **home altitude**, matching
   `MAV_FRAME_LOCAL_NED`, so a target's `down` is minus the altitude above home.
+
+### Tests
+
+`tests/carrot_guide/` mirrors `src/carrot_guide/` directory for directory, and the leaf under
+each one is the kind of run: `guidance/unit/test_hold.py` and `guidance/integration/test_hold.py`
+both test `guidance/hold.py`, one without a simulator and one against SITL. A module that is a
+single file gets a directory of its own rather than sharing one — `cli/unit/test_cli.py` and
+`cli/smoke/test_cli.py` for `cli.py`, `link/unit/test_link.py` for `link.py`.
+
+The kinds are `unit` (the module or package the directory mirrors, reaching only into what it
+already depends on — never up through `cli` or sideways to a peer), `component` (several modules
+wired together in process: the runner closed around a fake vehicle, a subcommand run from argv,
+still no simulator), `smoke` (the installed console script and `python -m carrot_guide.cli` as
+subprocesses, failing rather than skipping when nothing is installed) and `integration` (a
+running SITL). `make test` runs unit and component together, since both are fast; the markers
+are what let `-m unit` alone answer whether the pieces stand up by themselves. Because the
+mirror spreads every kind across the packages, a run is selected by marker rather than by path.
+Every test carries its kind as a decorator — `@pytest.mark.unit`, or `@pytest.mark.integration`
+above `@requires_simulator` — so what a test is is written on the test and not derived from
+where it sits; `--strict-markers` in `pyproject.toml` turns a typo there into an error rather
+than a test that belongs to no kind at all.
+
+`tests/` and every directory under it is a **package**, because the mirror gives
+`guidance/unit/test_hold.py` and `guidance/integration/test_hold.py` the same basename and only
+a package makes those two modules. A helper sits beside the tests that use it —
+**Every double lives in `tests/doubles/`**, named for what it stands in for, even the ones with
+a single caller — a test file should hold tests: `messages` (a MAVLink message), `clocks` (a
+clock that only moves when a test says so, and one where reading the time costs time so a
+busy-wait terminates), `connection` (a pymavlink connection that answers like an autopilot, and
+advances the fake clock on a blocking read that finds nothing) and `vehicles` (the two
+`MavlinkLink` stand-ins: `FakeVehicle` flies its commands, `ColdVehicle` refuses them).
+
+Other helpers sit beside the tests that use them: `guidance/toy_vehicle.py` (the point mass the
+laws are integrated over) and `commands/parsers.py` (argv against one command alone, because its
+options only exist once registered and `cli.build_parser()` would register all six). What
+crosses packages goes higher still — `tests/runs.py` for synthetic sample series, and
+`tests/simulator.py` for the url, `requires_simulator` and the `Flight` record. `tests/conftest.py`
+holds the fixtures, including the session-scoped `flight`/`vehicle` pair that takes off once
+for the whole run — up there
+because the simulator tests are spread across packages and this is the only conftest above all
+of them.
 
 ## Conventions
 
