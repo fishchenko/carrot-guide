@@ -1,6 +1,7 @@
 import pytest
 
 from carrot_guide.recording import Sample
+from carrot_guide.state import NED
 
 
 class Message:
@@ -77,3 +78,33 @@ def sample_row() -> Sample:
         mode="GUIDED",
         armed=True,
     )
+
+
+AT_REST = NED(0.0, 0.0, 0.0)
+
+
+def simulate(law, start: NED, steps: int, dt: float = 0.1, response_s: float = 0.0) -> list[NED]:
+    """Integrate a law over a toy vehicle, optionally one that takes time to obey.
+
+    Shared because the station-keeping tests and the intercept tests both integrate a
+    law this way, and two copies of a toy vehicle is two different toy vehicles.
+
+    With `response_s` at zero the vehicle takes up the commanded velocity instantly,
+    which is all the station-keeping laws need. The intercept laws are measured against
+    a first-order lag instead, because `ProNav` works by asking for a heading offset and
+    letting the lag turn it into a turn *rate* — on a vehicle that snaps to its command
+    the effective navigation constant would be set by the step size of this loop rather
+    than by anything in the law.
+    """
+    position = start
+    velocity = AT_REST
+    track = [position]
+    for step in range(steps):
+        command = law.command(position, velocity, step * dt).velocity
+        if response_s > 0.0:
+            velocity = velocity + (command - velocity).scaled(min(1.0, dt / response_s))
+        else:
+            velocity = command
+        position = position + velocity.scaled(dt)
+        track.append(position)
+    return track

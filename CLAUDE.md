@@ -44,21 +44,56 @@ The one boundary that matters is I/O. `link.py` is the **only** module that touc
 everything above it works on plain values, so all the math and the whole control loop are tested
 without a simulator.
 
-- `state.py` — `NED` vector, `GlobalPosition`, flat-earth WGS84 ↔ NED projection
-- `guidance.py` — `HoldPoint` (PD outer loop) and `Orbit` (tangential + radial terms). Pure math,
-  no imports from `link`/`telemetry`. Both return a `VelocityCommand` in local NED; the autopilot
-  closes the inner velocity loop.
-- `telemetry.py` — `TelemetryTracker`: last-known-value view fed one MAVLink message at a time.
-  No pymavlink import, so parsing is tested against hand-built stub messages.
+One class per file **where the class earns a file**. Value records stay grouped (`values.py`
+holds `Limits`, `Gains` and `VelocityCommand` — 16 lines of code between them), an exception stays
+beside what raises it, and the two Protocols stay together because they are one statement about
+the loop's two sides. Six files hold more than one class for those reasons; a rule that produced
+a 4-line file per 2-line dataclass would cost more than it buys.
+
+Seven of the twelve modules became packages **keeping their own name**, so
+`from carrot_guide.<name> import <symbol>` still resolves for those seven. `commands/` is the
+exception and the one path that did change: it came out of `cli.py`, so the command classes moved
+from `carrot_guide.cli` to `carrot_guide.commands.<name>`. `cli.py` itself keeps only `COMMANDS`,
+`build_parser` and `main`.
+
+Three rules keep the graph the acyclic DAG it already was: a package `__init__.py` re-exports only
+its own submodules and never across a layer; submodules import siblings by full dotted path
+(`from carrot_guide.guidance.values import Gains`), never through the package root; and **no
+re-exported name may equal a submodule name** — `from .launch import launch` overwrites the
+submodule attribute, so `mission.launch` became the function and `mission/launch.py` was
+unreachable by path. That is why the files are `mission/bringup.py` and `utils/percentiles.py`.
+
+- `state.py` — `NED` vector, `GlobalPosition`, `VehicleState`, flat-earth WGS84 ↔ NED projection.
+  Still flat: three value types and the projection pair, which belongs to two of them.
+- `guidance/` — pure math, no imports from `link`/`telemetry`. `values` (`Limits`, `Gains`,
+  `VelocityCommand`), `vectors` (`_rotated`, `_horizontal_unit`, `bearing_deg`, `YAW_DEADBAND_M` —
+  everything with more than one caller; the private ones stay private, a sibling module imports
+  them by full dotted path without needing the underscore dropped), `target`, `closing` (the tail
+  both intercept laws must
+  keep identical), then one law per file: `hold`, `orbit`, `pursuit`, `pronav`. Every law returns
+  a `VelocityCommand` in local NED; the autopilot closes the inner velocity loop.
+- `telemetry/` — `modes` is the MAVLink vocabulary both sides of the socket need and imports
+  nothing; `tracker` is `TelemetryTracker`, a last-known-value view fed one message at a time.
+  No pymavlink import either side, so parsing is tested against hand-built stub messages.
 - `link.py` — `MavlinkLink`: commands, ACK/state-change confirmation, params, `send_velocity`.
-- `runner.py` — `FixedRateLoop` + `GuidanceRunner`, and the `GuidanceLaw`/`VehicleLink` Protocols
-  that define what the loop needs from either side.
-- `mission.py` — `launch()`, `airborne()` context manager, latency measurement.
-- `utils.py` — everything general, types and functions alike: `Deadline` (the monotonic countdown
-  every wait in `link`/`mission`/`cli` is built from), `Command` (the argparse subcommand base),
-  `percentile()` shared by the loop and the analysis so neither imports the other, the CSV text
-  parsers, and `emit_json()` with its flag.
-- `metrics.py`, `recording.py`, `plots.py`, `cli.py` — summaries, CSV log, figures, subcommands.
+  Deliberately **not** split: the command half calls the plumbing half throughout, and this is
+  the one module allowed near a socket.
+- `runner/` — `scheduler` (`FixedRateLoop` + `measure_sleep_overshoot`; reaches only for its own
+  `stats` and `utils.percentile`), `flight` (`GuidanceRunner`), `protocols` (`GuidanceLaw`,
+  `VehicleLink`), `stats` (`Tick`, `LoopStats`). The split follows the seam `tests/` already drew
+  between `test_scheduler.py` and `test_runner.py`.
+- `mission/` — `vehicle` (the `(link, tracker)` pair), `bringup` (`launch()`, `airborne()`),
+  `reaction` (latency measurement — the only half that needs a guidance law).
+- `utils/` — everything general, one admitted thing per file so `ls` shows what passed the test:
+  `deadline` (the monotonic countdown every wait in `link`/`mission`/`commands` is built from),
+  `command` (the argparse subcommand base), `percentiles` (shared by the loop and the analysis so
+  neither imports the other), `text` (the CSV parsers), `emit` (`emit_json()` and its flag).
+- `metrics/` (`events`, `summary`, `latency`), `recording/` (`sample`, `sinks`), `plots.py`,
+  `commands/` — summaries, CSV log, figures, subcommands. `commands/__init__.py` deliberately
+  re-exports **nothing**: a facade there makes importing one subcommand load all six, which drags
+  `link` and pymavlink into `report`, the one subcommand that needs no vehicle. `cli.py` stays a
+  **module**, not a package `__main__`, so the console script and every `python -m carrot_guide.cli`
+  call site in the Makefile and `scripts/` keep working untouched.
 
 ### Invariants worth not breaking
 
@@ -105,8 +140,21 @@ without a simulator.
 
 - Prose for humans (`README.md`, `SPEC.md`) is **Ukrainian**; all code, comments, docstrings, test
   names and commit messages are **English**. Keep that split.
-- Comments explain *why* — usually a measured fact or a failure that motivated the code. They are
-  load-bearing documentation here; do not strip them, and match the register when adding code.
+- Comments are the exception, not the habit, and a file with none is fine. Docstrings are **not**
+  required on modules, classes or functions — one that restates the name is worse than none.
+  Exactly three things earn prose, in as few words as possible:
+  1. a **measured value or its derivation**, without which the constant is a magic number;
+  2. a line that **reads as wrong or arbitrary** unexplained — a workaround, an epsilon, a bitmask
+     whose set bit means "ignore", a spin that must not `sleep(0)`;
+  3. a **contract a caller could get wrong** and cannot see in the signature — returns `None` when
+     there is no intercept, raises on an empty run, the result is always a value from the input.
+- Everything else goes: no war stories about what a past bug did, no essays on why an alternative
+  was rejected or what belongs in a module, no import-topology asides ("shared by two callers that
+  must not import each other"), no restating the code, and no fact stated twice — keep the copy
+  nearest the code. Prose was 31% of source lines and was cut on purpose; do not grow it back.
+  When you shorten something, the measured numbers are what must survive.
+- `cli.py`'s module docstring is `argparse`'s `description=__doc__`, so it *is* the text of
+  `carrot-guide --help`. Editing it changes user-visible output.
 - Tests are named as sentences (`test_a_dead_position_stream_stops_the_loop_rather_than_flying_blind`).
 - No linter or formatter is configured; match surrounding style (~100 col, `from __future__ import
   annotations`, frozen dataclasses for values).
@@ -116,20 +164,22 @@ without a simulator.
   on stdout around the JSON and silently corrupted two committed files that way.
 - `scripts/plots.sh` is the single definition of the figures; `make plots` and `scripts/measure.sh`
   both call it, because two lists of plot commands had already drifted apart.
-- **`utils.py` holds everything general**, types and functions alike, and admits only what would
+- **`utils/` holds everything general**, types and functions alike, and admits only what would
   read the same way *verbatim* in a project with no aircraft in it. Liftable is necessary but
   not sufficient: `FixedRateLoop` would lift cleanly and stays in `runner` anyway, because a
   10 Hz control loop is what this project *is*. `utils` takes what is incidental to the work —
   a countdown, a percentile, an argparse base — never the work itself. Anything that fails the
   test keeps its domain half at home: `Command` moved, the `--url` option group it used to carry
-  stayed behind on `cli.VehicleCommand`.
-- A subcommand is a `utils.Command` subclass in `cli.py` carrying its own options and its own
-  handler, listed in `COMMANDS`. Each rung of the ladder owns the options at its level and
-  nothing else: `Command` is generic argparse plumbing and lives in `utils`; `VehicleCommand`
-  adds `--url`/`--timeout` for the four that talk to a vehicle (`report` does not); the flying
-  two subclass `FlightCommand`. Kept apart, `--kd` drifted onto the orbit parser and was read
-  by nothing. Shared option groups belong on the rung that owns them, never as a loose
-  module-level function a subclass has to remember to call.
+  stayed behind on `commands.VehicleCommand`. One admitted thing per file, so the package
+  listing is the charter's own audit rather than something buried in a scroll.
+- A subcommand is a `utils.Command` subclass in its own file under `commands/`, carrying its own
+  options and its own handler, listed in `COMMANDS` in `cli.py`. Each rung of the ladder owns the
+  options at its level and nothing else: `Command` is generic argparse plumbing and lives in
+  `utils`; `VehicleCommand` adds `--url`/`--timeout` for the five that talk to a vehicle
+  (`report` does not); the flying three subclass `FlightCommand`. Kept apart, `--kd` drifted onto
+  the orbit parser and was read by nothing. Shared option groups belong on the rung that owns
+  them, never as a loose module-level function a subclass has to remember to call. The ladder
+  stays a class hierarchy — one file per rung, not a file per option group.
 
 ## Simulator
 

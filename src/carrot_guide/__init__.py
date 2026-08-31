@@ -1,5 +1,3 @@
-"""Guidance laws for a multirotor, flown against an ArduPilot SITL simulator."""
-
 from carrot_guide.state import (
     GlobalPosition,
     NED,

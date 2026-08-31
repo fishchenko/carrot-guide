@@ -105,7 +105,7 @@ def test_the_target_track_comes_from_the_course_it_was_given():
         ["intercept", "--north", "50", "--east", "0", "--target-speed", "3",
          "--target-heading", "90"]
     )
-    target = InterceptCommand._target(args)
+    target = InterceptCommand("intercept", "")._target(args)
     assert target.velocity.north == pytest.approx(0.0, abs=1e-9)
     assert target.velocity.east == pytest.approx(3.0)
     assert target.at(10.0).east == pytest.approx(30.0)

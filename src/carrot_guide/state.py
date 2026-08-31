@@ -1,5 +1,3 @@
-"""Vehicle state and the local frame used by the guidance laws."""
-
 from __future__ import annotations
 
 import math
@@ -10,8 +8,6 @@ EARTH_RADIUS_M = 6_378_137.0
 
 @dataclass(frozen=True)
 class GlobalPosition:
-    """WGS84 position as reported over MAVLink."""
-
     lat_deg: float
     lon_deg: float
     alt_m: float
@@ -19,8 +15,6 @@ class GlobalPosition:
 
 @dataclass(frozen=True)
 class NED:
-    """Offset in the local north-east-down frame, metres."""
-
     north: float
     east: float
     down: float = 0.0
@@ -39,7 +33,7 @@ class NED:
         return math.hypot(self.north, self.east)
 
     def clamped_horizontally(self, limit: float) -> NED:
-        """Cap horizontal magnitude at `limit`, keeping direction and vertical part."""
+        """Cap horizontal magnitude at `limit`; `down` passes through unchanged."""
         norm = self.horizontal_norm
         if norm <= limit or norm == 0.0:
             return self
@@ -49,8 +43,6 @@ class NED:
 
 @dataclass(frozen=True)
 class VehicleState:
-    """Everything the control loop needs for one iteration."""
-
     position: GlobalPosition
     velocity: NED
     heading_deg: float
@@ -61,11 +53,7 @@ class VehicleState:
 
 
 def to_local_ned(position: GlobalPosition, origin: GlobalPosition) -> NED:
-    """Flat-earth projection of `position` relative to `origin`.
-
-    Accurate to well under a metre over the ranges this project flies (hundreds of
-    metres), which keeps the guidance laws free of a full geodesy dependency.
-    """
+    """Flat-earth projection: sub-metre error over the few hundred metres flown here."""
     lat_rad = math.radians(origin.lat_deg)
     north = math.radians(position.lat_deg - origin.lat_deg) * EARTH_RADIUS_M
     east = math.radians(position.lon_deg - origin.lon_deg) * EARTH_RADIUS_M * math.cos(lat_rad)
@@ -74,7 +62,6 @@ def to_local_ned(position: GlobalPosition, origin: GlobalPosition) -> NED:
 
 
 def from_local_ned(offset: NED, origin: GlobalPosition) -> GlobalPosition:
-    """Inverse of `to_local_ned`."""
     lat_rad = math.radians(origin.lat_deg)
     lat = origin.lat_deg + math.degrees(offset.north / EARTH_RADIUS_M)
     lon = origin.lon_deg + math.degrees(offset.east / (EARTH_RADIUS_M * math.cos(lat_rad)))

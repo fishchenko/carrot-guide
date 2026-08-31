@@ -1,9 +1,3 @@
-"""MAVLink transport: the only module that talks to a socket.
-
-Everything above it (guidance, telemetry parsing, the loop scheduler) works on plain
-values, so this is the single seam that has to be faked or replaced in tests.
-"""
-
 from __future__ import annotations
 
 import math
@@ -17,12 +11,10 @@ from carrot_guide.state import NED
 from carrot_guide.telemetry import MODE_NUMBER_BY_NAME, TelemetryTracker
 from carrot_guide.utils import Deadline
 
-# SET_POSITION_TARGET_LOCAL_NED type masks. A set bit means "ignore this field", so
-# both masks keep the velocity triplet and drop position, acceleration and yaw rate.
+# A set bit means "ignore this field", so both masks keep only the velocity triplet.
 IGNORE_ALL_BUT_VELOCITY = 0b110111000111
 IGNORE_ALL_BUT_VELOCITY_AND_YAW = 0b100111000111
 
-# Messages the control loop depends on, with the rate each is asked to arrive at.
 STREAM_RATES_HZ: dict[str, float] = {
     "GLOBAL_POSITION_INT": 20.0,
     "HEARTBEAT": 2.0,
@@ -35,16 +27,12 @@ MESSAGE_IDS: dict[str, int] = {
     "SYS_STATUS": 1,
 }
 
-# Capped well under any wait it serves, so a lapsed deadline is noticed when it lapses
-# rather than one whole read later.
+# Well under any wait it serves, so a lapsed deadline is noticed within one read.
 MAX_BLOCKING_READ_S = 0.5
 
-# One spelling for the whole project: the default here used to be a seventh endpoint
-# ("udp:127.0.0.1:14550") that nothing else named.
 DEFAULT_SIMULATOR_URL = "tcp:127.0.0.1:5760"
 
-# MAVLink's documented token for param2 of MAV_CMD_COMPONENT_ARM_DISARM: disarm even
-# though the vehicle believes it is still flying.
+# MAVLink's documented param2 token for MAV_CMD_COMPONENT_ARM_DISARM: disarm in flight.
 FORCE_DISARM_MAGIC = 21196.0
 
 
@@ -58,12 +46,7 @@ class CommandFailed(LinkError):
 
 @dataclass
 class MavlinkLink:
-    """Thin, blocking wrapper over a pymavlink connection.
-
-    Commands are sent and then confirmed — either by their COMMAND_ACK or by the
-    state change they are supposed to cause. A fire-and-forget wrapper reads fine in
-    a demo and then hides every failure the moment the simulator is under load.
-    """
+    """Blocking: each command is confirmed by its COMMAND_ACK or by the state change it causes."""
 
     connection: Any
     ack_timeout_s: float = 5.0
@@ -75,8 +58,6 @@ class MavlinkLink:
         link.wait_heartbeat(timeout_s)
         return link
 
-    # -- plumbing ---------------------------------------------------------------
-
     @property
     def target(self) -> tuple[int, int]:
         return self.connection.target_system, self.connection.target_component
@@ -86,7 +67,6 @@ class MavlinkLink:
             raise LinkError(f"no HEARTBEAT within {timeout_s:g} s")
 
     def request_streams(self, rates_hz: dict[str, float] | None = None) -> None:
-        """Ask for the messages the loop needs at the rate it needs them."""
         for name, rate in (rates_hz or STREAM_RATES_HZ).items():
             interval_us = int(1e6 / rate)
             self._send_command(
@@ -97,11 +77,7 @@ class MavlinkLink:
             )
 
     def drain(self, tracker: TelemetryTracker, budget_s: float = 0.0) -> int:
-        """Feed every message already queued into `tracker`; return how many.
-
-        With `budget_s` at zero this never blocks, which is what the control loop
-        wants: read what has arrived, act on it, and keep the period stable.
-        """
+        """Feed queued messages to `tracker` and return the count; `budget_s=0` never blocks."""
         deadline = Deadline.after(budget_s)
         count = 0
         while True:
@@ -120,15 +96,7 @@ class MavlinkLink:
         timeout_s: float,
         tracker: TelemetryTracker | None = None,
     ) -> Any | None:
-        """Wait for one message of `kind`, feeding everything else to `tracker`.
-
-        pymavlink's own type filter is destructive: `recv_match(type=...)` consumes and
-        throws away every message that does not match while it looks for one that does.
-        Waiting for an ACK that way quietly ate the STATUSTEXT sitting next to it in the
-        same burst — which is the one message that says *why* a command was refused, and
-        the one the failure paths here promise to quote. So the wait reads everything and
-        filters afterwards, leaving the tracker as the single place messages accumulate.
-        """
+        """`recv_match(type=...)` drops non-matching messages, including a refusal's STATUSTEXT."""
         deadline = Deadline.after(timeout_s)
         while not deadline.expired:
             message = self.connection.recv_match(
@@ -155,8 +123,6 @@ class MavlinkLink:
             if predicate(tracker):
                 return
         raise CommandFailed(f"timed out after {timeout_s:g} s waiting for {description}")
-
-    # -- commands ---------------------------------------------------------------
 
     def _send_command(
         self,
@@ -189,7 +155,6 @@ class MavlinkLink:
         self.wait_for(lambda t: t.mode == name, tracker, timeout_s, f"mode {name}")
 
     def wait_ready_to_arm(self, tracker: TelemetryTracker, timeout_s: float = 120.0) -> None:
-        """Wait for a position estimate good enough that GUIDED will accept an arm."""
         self.wait_for(lambda t: t.has_position, tracker, timeout_s, "a position estimate")
 
     def _send_until_accepted(
@@ -200,15 +165,7 @@ class MavlinkLink:
         timeout_s: float,
         retry_every_s: float = 2.0,
     ) -> None:
-        """Repeat a command until the vehicle accepts it, or the deadline passes.
-
-        A freshly started autopilot refuses to arm — and, for a moment after arming,
-        to take off — while its own checks are still settling, and says so with a bare
-        rejection rather than a reason. Those refusals are transient, so a single
-        attempt is a race against start-up rather than an answer. Retrying is what a
-        ground station does, and what lets the integration tests run against a cold
-        simulator instead of one that happens to have been up for a while.
-        """
+        """A cold autopilot refuses arm and takeoff transiently, with no reason given."""
         deadline = Deadline.after(timeout_s)
         refusals = 0
         while not deadline.expired:
@@ -217,7 +174,6 @@ class MavlinkLink:
                 return
             except CommandFailed:
                 refusals += 1
-                # Keep the telemetry flowing while the checks have another go.
                 self.drain(tracker, budget_s=retry_every_s)
         explanation = tracker.last_status
         raise CommandFailed(
@@ -242,9 +198,7 @@ class MavlinkLink:
             timeout_s=timeout_s,
             retry_every_s=retry_every_s,
         )
-        # Inside the same budget, not on top of it: a caller that allowed 30 s for
-        # arming meant 30 s in total, and `launch()` re-establishes the whole sequence
-        # on its own schedule.
+        # Inside the caller's budget, not on top of it.
         self.wait_for(lambda t: t.armed, tracker, deadline.slice(10.0), "the vehicle to arm")
 
     def disarm(
@@ -253,11 +207,7 @@ class MavlinkLink:
         timeout_s: float = 10.0,
         force: bool = False,
     ) -> None:
-        """Command a disarm. SPEC F2 asks for it; the flying paths reach it through `land`.
-
-        `force` is the in-air disarm, which the autopilot refuses without the magic token
-        because it is how you drop a vehicle out of the sky.
-        """
+        """`force` is the in-air disarm, which the autopilot refuses without the token."""
         self._send_command(
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0,
@@ -274,7 +224,6 @@ class MavlinkLink:
         accept_timeout_s: float = 60.0,
         retry_every_s: float = 2.0,
     ) -> None:
-        """Climb to `altitude_m` above home and wait until it is essentially reached."""
         self._send_until_accepted(
             mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
             0,
@@ -306,11 +255,7 @@ class MavlinkLink:
         tracker: TelemetryTracker | None = None,
         timeout_s: float = 5.0,
     ) -> float:
-        """Set a parameter and read back what the vehicle actually stored.
-
-        Used to switch the simulator's wind on for the disturbance runs, so the
-        conditions a measurement was taken under are set by the test, not by hand.
-        """
+        """Returns the value the vehicle stored, which need not be the one asked for."""
         system, component = self.target
         self.connection.mav.param_set_send(
             system,
@@ -329,11 +274,7 @@ class MavlinkLink:
         raise CommandFailed(f"parameter {name} was not confirmed")
 
     def send_velocity(self, velocity: NED, yaw_deg: float | None = None) -> None:
-        """Command a velocity in the local NED frame for one control cycle.
-
-        ArduPilot treats these targets as short-lived: stop sending and the vehicle
-        brakes, which is the failsafe the control loop relies on.
-        """
+        """ArduPilot treats these targets as short-lived: stop sending and the vehicle brakes."""
         system, component = self.target
         mask = IGNORE_ALL_BUT_VELOCITY if yaw_deg is None else IGNORE_ALL_BUT_VELOCITY_AND_YAW
         self.connection.mav.set_position_target_local_ned_send(

@@ -1,9 +1,3 @@
-"""Plots for a recorded run: the flown track, and the error against time.
-
-matplotlib is an optional dependency — flying and measuring must not require it, so
-the import lives inside the function and the failure message says what to install.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,20 +17,13 @@ def plot_run(
     target_start: NED | None = None,
     target_velocity: NED | None = None,
 ) -> Path:
-    """Write a two-panel figure: track on the left, tracking error on the right.
-
-    `centre` marks something that stays put; `target_start` with `target_velocity` marks
-    something that does not, and the two are drawn differently on purpose. Against a
-    mover the aim point is a line rather than a cross, and where the two tracks come
-    together is the whole result — a lead course meets it, a tail chase arrives behind
-    it and turns for the rest of the run.
-    """
+    """Two panels: track and error. `centre` is a static aim point, `target_start` a moving one."""
     try:
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-    except ImportError as error:  # pragma: no cover - depends on the environment
+    except ImportError as error:  # pragma: no cover
         raise RuntimeError("plotting needs matplotlib: pip install '.[plots]'") from error
 
     if not samples:
@@ -59,9 +46,6 @@ def plot_run(
             track.add_patch(circle)
 
     if target_start is not None:
-        # Recomputed from the run's own parameters rather than logged per sample: the
-        # target is a pure function of time, so this cannot drift from what the law was
-        # actually aiming at, and the log stays the vehicle's story alone.
         velocity = target_velocity if target_velocity is not None else NED(0.0, 0.0, 0.0)
         times = [s.t_s for s in samples]
         target_east = [target_start.east + velocity.east * t for t in times]
@@ -69,9 +53,7 @@ def plot_run(
         track.plot(target_east, target_north, "--", linewidth=1.2, color="black", label="target")
         track.plot(target_east[0], target_north[0], "x", color="black")
 
-        # Where it got there, by `reach_time` rather than the deepest approach: a law
-        # that stays alongside its target goes on making new minima, and marking the
-        # lowest of them puts the star minutes away from the pass it is meant to show.
+        # `reach_time`, not the deepest approach: a law that stays alongside keeps making minima.
         reached = reach_time(samples, DEFAULT_REACH_THRESHOLD_M)
         if reached is not None:
             at = min(range(len(samples)), key=lambda i: abs(samples[i].t_s - reached))

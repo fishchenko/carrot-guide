@@ -7,7 +7,7 @@ instead of tolerant.
 
 import pytest
 
-from carrot_guide.runner import FixedRateLoop, measure_sleep_overshoot
+from carrot_guide.runner.scheduler import FixedRateLoop, measure_sleep_overshoot
 
 from conftest import FakeClock, SpinningClock
 
@@ -167,6 +167,6 @@ def test_sleep_overshoot_is_measured_not_assumed():
 
 
 def test_calibrated_slack_never_eats_the_whole_period(monkeypatch):
-    monkeypatch.setattr("carrot_guide.runner.measure_sleep_overshoot", lambda **_: 10.0)
+    monkeypatch.setattr("carrot_guide.runner.scheduler.measure_sleep_overshoot", lambda **_: 10.0)
     loop = FixedRateLoop.calibrated(10.0)
     assert loop.spin_slack_s == pytest.approx(0.1 * FixedRateLoop.MAX_SPIN_SHARE)

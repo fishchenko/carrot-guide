@@ -1,10 +1,3 @@
-"""Turn the raw MAVLink message stream into a typed vehicle state.
-
-The tracker keeps the last value seen for each message it cares about and hands out
-an immutable `VehicleState` snapshot. It never touches a socket, so the parsing is
-unit-tested against hand-built messages rather than against a live simulator.
-"""
-
 from __future__ import annotations
 
 from collections import deque
@@ -12,44 +5,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from carrot_guide.state import GlobalPosition, NED, VehicleState
-
-# Spelled out rather than imported, so this module stays free of pymavlink and can be
-# exercised with plain stubs.
-MAV_MODE_FLAG_SAFETY_ARMED = 0b1000_0000
-HEADING_UNKNOWN = 65535
-
-# ArduCopter custom_mode values, the subset this project ever asks for or asserts on.
-MODE_NAME_BY_NUMBER: dict[int, str] = {
-    0: "STABILIZE",
-    1: "ACRO",
-    2: "ALT_HOLD",
-    3: "AUTO",
-    4: "GUIDED",
-    5: "LOITER",
-    6: "RTL",
-    7: "CIRCLE",
-    9: "LAND",
-    16: "POSHOLD",
-    20: "GUIDED_NOGPS",
-}
-
-MODE_NUMBER_BY_NAME: dict[str, int] = {
-    name: number for number, name in MODE_NAME_BY_NUMBER.items()
-}
-
-
-def mode_name(custom_mode: int) -> str:
-    return MODE_NAME_BY_NUMBER.get(custom_mode, f"MODE_{custom_mode}")
+from carrot_guide.telemetry.modes import HEADING_UNKNOWN, MAV_MODE_FLAG_SAFETY_ARMED, mode_name
 
 
 class TelemetryError(RuntimeError):
-    """Raised when a state snapshot is asked for before the stream can supply one."""
+    """Raised when the stream has not yet supplied a position."""
 
 
 @dataclass
 class TelemetryTracker:
-    """Last-known-value view of the vehicle, fed one MAVLink message at a time."""
-
     position: GlobalPosition | None = None
     velocity: NED = NED(0.0, 0.0, 0.0)
     heading_deg: float = 0.0
@@ -58,17 +22,13 @@ class TelemetryTracker:
     battery_pct: float | None = None
     timestamp_s: float = 0.0
     origin: GlobalPosition | None = None
-    # Counts position reports rather than messages of any kind: a link that still
-    # heartbeats while the position stream has died is exactly the case the control
-    # loop has to notice.
+    # Position reports only: a link can keep heartbeating with the position stream dead.
     position_updates: int = 0
-    # The autopilot explains a refusal in STATUSTEXT, not in the COMMAND_ACK, so the
-    # reason is only ever in the message stream. Keeping the recent ones means an
-    # error can quote the vehicle instead of just reporting a number.
+    # Refusal reasons arrive in STATUSTEXT, not in COMMAND_ACK.
     status_texts: deque[str] = field(default_factory=lambda: deque(maxlen=10))
 
     def handle(self, message: Any) -> None:
-        """Absorb one message; unknown types are ignored."""
+        """Unknown message types are ignored."""
         kind = message.get_type()
         if kind == "GLOBAL_POSITION_INT":
             self._handle_global_position(message)
@@ -82,9 +42,8 @@ class TelemetryTracker:
             self.battery_pct = None if remaining < 0 else float(remaining)
 
     def _handle_global_position(self, message: Any) -> None:
-        # ArduPilot reports lat/lon in 1e7 degrees, altitudes in mm and speeds in cm/s.
-        # `relative_alt` is measured from the home point, which is also where the local
-        # frame is anchored, so the two agree without an extra AMSL correction.
+        # lat/lon in 1e7 degrees, altitudes in mm, speeds in cm/s. `relative_alt` is measured
+        # from home, where the local frame is anchored, so no AMSL correction is needed.
         self.position = GlobalPosition(
             lat_deg=message.lat / 1e7,
             lon_deg=message.lon / 1e7,
@@ -102,7 +61,6 @@ class TelemetryTracker:
 
     @property
     def last_status(self) -> str | None:
-        """The most recent thing the vehicle said about itself, if anything."""
         return self.status_texts[-1] if self.status_texts else None
 
     @property
@@ -110,7 +68,7 @@ class TelemetryTracker:
         return self.position is not None
 
     def set_origin(self, position: GlobalPosition | None = None) -> GlobalPosition:
-        """Anchor the local frame, defaulting to wherever the vehicle is right now."""
+        """Defaults to the vehicle's current position."""
         origin = position or self.position
         if origin is None:
             raise TelemetryError("no position received yet, cannot anchor the local frame")
