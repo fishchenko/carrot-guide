@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from carrot_guide.guidance.values import Gains, Limits, VelocityCommand
-from carrot_guide.guidance.vectors import bearing_deg, _rotated
+from carrot_guide.guidance.vectors import bearing_deg, rotated
 from carrot_guide.state import NED
 
 
@@ -39,7 +39,7 @@ class Orbit:
         if self.lookahead_s <= 0.0:
             return outward
         angle = self.rate_rad_s * self.lookahead_s * (1.0 if self.clockwise else -1.0)
-        return _rotated(outward, angle)
+        return rotated(outward, angle)
 
     def command(self, position: NED, velocity: NED, t_s: float = 0.0) -> VelocityCommand:
         # No derivative term here, so `velocity` and `gains.kd_horizontal` go unread; the

@@ -67,15 +67,21 @@ re-exported name may equal a submodule name** — `from .launch import launch` o
 submodule attribute, so `mission.launch` became the function and `mission/launch.py` was
 unreachable by path. That is why the files are `mission/bringup.py` and `utils/percentiles.py`.
 
+A leading underscore means **one file, not one package**. A name a sibling module imports
+carries no underscore, however internal it is; what keeps it out of the public API is the
+package `__init__.py`, which re-exports `bearing_deg` and not `rotated`, `horizontal_unit` or
+`closing_command`. Underscores are left for names with no caller outside their own file —
+`HoldPoint._pd_step`, `recording.sample._sample_from_row` — and for class internals a test may
+still reach into (`ReportCommand._parse_circle`).
+
 - `state.py` — `NED` vector, `GlobalPosition`, `VehicleState`, flat-earth WGS84 ↔ NED projection.
   Still flat: three value types and the projection pair, which belongs to two of them.
 - `guidance/` — pure math, no imports from `link`/`telemetry`. `values` (`Limits`, `Gains`,
-  `VelocityCommand`), `vectors` (`_rotated`, `_horizontal_unit`, `bearing_deg`, `YAW_DEADBAND_M` —
-  everything with more than one caller; the private ones stay private, a sibling module imports
-  them by full dotted path without needing the underscore dropped), `target`, `closing` (the tail
-  both intercept laws must
-  keep identical), then one law per file: `hold`, `orbit`, `pursuit`, `pronav`. Every law returns
-  a `VelocityCommand` in local NED; the autopilot closes the inner velocity loop.
+  `VelocityCommand`), `vectors` (`rotated`, `horizontal_unit`, `bearing_deg`, `YAW_DEADBAND_M` —
+  everything with more than one caller), `target`, `closing` (`closing_command`, the tail both
+  intercept laws must keep identical), then one law per file: `hold`, `orbit`, `pursuit`,
+  `pronav`. Every law returns a `VelocityCommand` in local NED; the autopilot closes the inner
+  velocity loop.
 - `telemetry/` — `modes` is the MAVLink vocabulary both sides of the socket need and imports
   nothing; `tracker` is `TelemetryTracker`, a last-known-value view fed one message at a time.
   No pymavlink import either side, so parsing is tested against hand-built stub messages.

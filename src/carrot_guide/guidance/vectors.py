@@ -5,7 +5,7 @@ import math
 from carrot_guide.state import NED
 
 
-def _rotated(vector: NED, angle_rad: float) -> NED:
+def rotated(vector: NED, angle_rad: float) -> NED:
     """Clockwise seen from above, i.e. the north->east sense bearings increase in."""
     cos, sin = math.cos(angle_rad), math.sin(angle_rad)
     return NED(
@@ -15,7 +15,7 @@ def _rotated(vector: NED, angle_rad: float) -> NED:
     )
 
 
-def _horizontal_unit(offset: NED) -> NED | None:
+def horizontal_unit(offset: NED) -> NED | None:
     """None when the horizontal part vanishes; callers pick their own fallback."""
     norm = offset.horizontal_norm
     if norm < 1e-6:

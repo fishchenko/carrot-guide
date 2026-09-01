@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from carrot_guide.guidance.closing import _closing_command
+from carrot_guide.guidance.closing import closing_command
 from carrot_guide.guidance.target import Target
 from carrot_guide.guidance.values import Gains, Limits, VelocityCommand
-from carrot_guide.guidance.vectors import _horizontal_unit, _rotated
+from carrot_guide.guidance.vectors import horizontal_unit, rotated
 from carrot_guide.state import NED
 
 
@@ -50,13 +50,13 @@ class ProNav:
 
     def command(self, position: NED, velocity: NED, t_s: float) -> VelocityCommand:
         offset = self.error(position, t_s)
-        line_of_sight = _horizontal_unit(offset)
-        heading = _horizontal_unit(velocity)
+        line_of_sight = horizontal_unit(offset)
+        heading = horizontal_unit(velocity)
         if heading is None or velocity.horizontal_norm < PRONAV_MIN_HEADING_SPEED_MPS:
             aim = line_of_sight
         else:
             rate = self.line_of_sight_rate(position, velocity, t_s)
-            aim = _rotated(heading, self.n * rate * self.response_s)
-        return _closing_command(
+            aim = rotated(heading, self.n * rate * self.response_s)
+        return closing_command(
             aim, offset, self.speed_mps, self.gains, self.limits, self.face_target
         )

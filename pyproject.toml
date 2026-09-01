@@ -28,8 +28,8 @@ testpaths = ["tests"]
 # `guidance/unit/test_hold.py` and `guidance/integration/test_hold.py` the same
 # basename and only a package makes those two different modules.
 pythonpath = ["src"]
-# Every test file declares its kind in `pytestmark`; --strict-markers is what turns a
-# typo there into an error instead of a test that belongs to no kind.
+# Every test carries its kind as a decorator; --strict-markers is what turns a typo
+# there into an error instead of a test that belongs to no kind.
 addopts = ["--strict-markers"]
 markers = [
     "unit: one module or package, in isolation",

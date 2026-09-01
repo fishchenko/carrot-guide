@@ -56,7 +56,7 @@ class FakeConnection:
         self.mav = self
         self.inbox: deque[Message] = deque()
         self.commands: list[tuple[int, tuple[float, ...]]] = []
-        self.targets: list[Target] = []
+        self.targets: list[SentTarget] = []
         self.params: list[tuple[str, float]] = []
         self.arm_results = deque(arm_results or [ACCEPTED])
         self.reject: set[int] = set()  # commands answered with a refusal

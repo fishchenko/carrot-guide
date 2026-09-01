@@ -5,7 +5,7 @@ from carrot_guide.guidance.vectors import YAW_DEADBAND_M, bearing_deg
 from carrot_guide.state import NED
 
 
-def _closing_command(
+def closing_command(
     heading: NED | None,
     offset: NED,
     speed_mps: float,
